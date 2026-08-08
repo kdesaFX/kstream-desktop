@@ -1,0 +1,66 @@
+{
+  "name": "kstream-desktop",
+  "productName": "kstream",
+  "version": "1.0.0",
+  "description": "kstream Windows desktop app — native scraping, auto-updates, system tray",
+  "author": "kdesaFX",
+  "license": "MIT",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win",
+    "build:win": "electron-builder --win",
+    "dist": "electron-builder --win --publish=never"
+  },
+  "dependencies": {
+    "electron-updater": "^6.7.3"
+  },
+  "devDependencies": {
+    "electron": "^39.3.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.kdesafx.kstream",
+    "productName": "kstream",
+    "directories": {
+      "output": "dist"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "kdesaFX",
+      "repo": "kstream-desktop"
+    },
+    "files": [
+      "src/**/*",
+      "logo.png",
+      "package.json"
+    ],
+    "win": {
+      "icon": "logo.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "requestedExecutionLevel": "asInvoker",
+      "executableName": "kstream"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "kstream",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "kstream-Setup.${ext}",
+      "runAfterFinish": true,
+      "allowElevation": false,
+      "differentialPackage": false,
+      "packElevateHelper": false
+    }
+  }
+}
