@@ -200,9 +200,16 @@ function createMainWindow() {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
-    backgroundColor: '#0b1220',
+    backgroundColor: '#141414',
     icon: iconPath,
     title: 'kstream',
+    // Custom dark title bar: brand from the web app, native min/max/close overlay
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#141414',
+      symbolColor: '#c8c8c8',
+      height: 36,
+    },
     webPreferences: {
       preload: PRELOAD,
       contextIsolation: true,
