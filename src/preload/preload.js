@@ -71,6 +71,12 @@ contextBridge.exposeInMainWorld('desktopApi', {
   openOffline() {
     console.info('[kstream-desktop] Offline library is not available in Core v1.');
   },
+  windowControls: {
+    minimize: () => ipcRenderer.invoke('window:minimize'),
+    maximize: () => ipcRenderer.invoke('window:maximize'),
+    close: () => ipcRenderer.invoke('window:close'),
+    isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+  },
 });
 
 contextBridge.exposeInMainWorld('__PSTREAM_OPEN_SETTINGS__', () => {
