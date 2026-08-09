@@ -8,8 +8,16 @@ const { spawn } = require('child_process');
 const PRODUCT = 'kstream';
 const EXE_NAME = 'kstream.exe';
 
+function getLocalAppData() {
+  if (process.env.LOCALAPPDATA) {
+    return process.env.LOCALAPPDATA;
+  }
+  // Electron has appData (Roaming), not localAppData — derive Local from it.
+  return path.join(app.getPath('appData'), '..', 'Local');
+}
+
 function getInstallDir() {
-  return path.join(app.getPath('localAppData'), 'Programs', PRODUCT);
+  return path.join(getLocalAppData(), 'Programs', PRODUCT);
 }
 
 function getPortableRoot() {
