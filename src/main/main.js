@@ -134,13 +134,18 @@ function createTray(win) {
 function createSetupWindow() {
   showingSetup = true;
 
+  const { width: workW, height: workH } = require('electron').screen.getPrimaryDisplay().workAreaSize;
+  const width = Math.min(520, Math.max(420, workW - 80));
+  const height = Math.min(680, Math.max(560, workH - 80));
+
   mainWindow = new BrowserWindow({
-    width: 520,
-    height: 640,
+    width,
+    height,
     resizable: false,
     maximizable: false,
     fullscreenable: false,
     show: false,
+    center: true,
     autoHideMenuBar: true,
     backgroundColor: '#030303',
     icon: path.join(ROOT, 'logo.png'),
@@ -151,12 +156,19 @@ function createSetupWindow() {
       nodeIntegration: false,
       sandbox: false,
       spellcheck: false,
+      zoomFactor: 1,
     },
   });
 
   mainWindow.setMenuBarVisibility(false);
 
+  mainWindow.webContents.setVisualZoomLevelLimits(1, 1).catch(() => {});
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainWindow.webContents.setZoomFactor(1);
+  });
+
   mainWindow.once('ready-to-show', () => {
+    mainWindow.webContents.setZoomFactor(1);
     mainWindow.show();
   });
 
@@ -250,11 +262,9 @@ function openAppAfterSetup() {
 function registerSetupIpc() {
   ipcMain.handle('setup:getInfo', async () => {
     const info = getSetupInfo();
-    const logoFile = path.join(ROOT, 'logo.png');
     return {
       ...info,
       installDirShort: 'appdata\\programs\\kstream',
-      logoUrl: pathToFileURL(logoFile).href,
     };
   });
 

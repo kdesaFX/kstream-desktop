@@ -1,5 +1,4 @@
 (() => {
-  const logo = document.getElementById('logo');
   const versionEl = document.getElementById('version');
   const installPathEl = document.getElementById('install-path');
   const statusEl = document.getElementById('status');
@@ -31,9 +30,6 @@
 
     try {
       const info = await window.kstreamSetup.getInfo();
-      if (info.logoUrl) {
-        logo.src = info.logoUrl;
-      }
       versionEl.textContent = info.version || '1.0';
       installPathEl.textContent = info.installDirShort || 'appdata\\programs\\kstream';
       btnInstall.disabled = false;

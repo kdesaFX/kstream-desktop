@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+    />
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data:; script-src 'self'"
@@ -13,7 +16,36 @@
   <body>
     <div class="shell">
       <main class="card" aria-labelledby="welcome-title">
-        <img id="logo" class="logo" alt="" width="72" height="72" />
+        <!-- Inline SVG: transparent, no black square from logo.png -->
+        <div class="logo" aria-hidden="true">
+          <svg viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="64" cy="64" r="18" fill="#6eecd9" />
+            <path
+              d="M38 44c-10 8-10 32 0 40"
+              stroke="#6eecd9"
+              stroke-width="10"
+              stroke-linecap="round"
+            />
+            <path
+              d="M90 44c10 8 10 32 0 40"
+              stroke="#6eecd9"
+              stroke-width="10"
+              stroke-linecap="round"
+            />
+            <path
+              d="M24 32c-16 14-16 50 0 64"
+              stroke="#6eecd9"
+              stroke-width="10"
+              stroke-linecap="round"
+            />
+            <path
+              d="M104 32c16 14 16 50 0 64"
+              stroke="#6eecd9"
+              stroke-width="10"
+              stroke-linecap="round"
+            />
+          </svg>
+        </div>
 
         <h1 id="welcome-title">welcome to kstream</h1>
         <p class="lede">

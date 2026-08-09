@@ -259,6 +259,11 @@ async function installToAppData() {
     copyAppToInstallDir(installDir);
   } catch (err) {
     const msg = String(err && err.message ? err.message : err);
+    if (/enospc|no space left/i.test(msg)) {
+      throw new Error(
+        'not enough free disk space on C: to install. free ~500MB and try again (or choose portable).',
+      );
+    }
     if (/ebusy|eperm|resource busy|locked/i.test(msg)) {
       throw new Error(
         'install folder is locked by another kstream process. close other kstream windows and try again.',
