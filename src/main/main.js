@@ -24,7 +24,6 @@ const {
   getSetupInfo,
   getInstallDir,
 } = require('./install');
-const { installNativeTitleBar } = require('./titlebar');
 
 // Must run before userData / store is touched.
 configurePortableUserData();
@@ -200,9 +199,8 @@ function createMainWindow() {
     minWidth: 900,
     minHeight: 600,
     show: false,
-    frame: false,
     autoHideMenuBar: true,
-    backgroundColor: '#141414',
+    backgroundColor: '#0b1220',
     icon: iconPath,
     title: 'kstream',
     webPreferences: {
@@ -249,15 +247,6 @@ function createMainWindow() {
       `Could not open ${url}\n\n${desc} (${code})\n\nCheck your connection, then restart the app.`,
     );
   });
-
-  const injectTitleBar = () => {
-    installNativeTitleBar(mainWindow).catch((err) => {
-      console.warn('[kstream-desktop] titlebar inject failed', err);
-    });
-  };
-  mainWindow.webContents.on('dom-ready', injectTitleBar);
-  mainWindow.webContents.on('did-finish-load', injectTitleBar);
-  mainWindow.webContents.on('did-navigate-in-page', injectTitleBar);
 
   const url = getStreamUrl();
   console.log('[kstream-desktop] loading', url);
@@ -326,26 +315,6 @@ function registerIpc() {
 
   ipcMain.handle('updateMediaMetadata', async () => ({ success: true }));
   ipcMain.handle('openOfflineApp', async () => ({ success: true }));
-
-  ipcMain.handle('window:minimize', () => {
-    const win = BrowserWindow.getFocusedWindow() || mainWindow;
-    win?.minimize();
-  });
-  ipcMain.handle('window:maximize', () => {
-    const win = BrowserWindow.getFocusedWindow() || mainWindow;
-    if (!win) return false;
-    if (win.isMaximized()) win.unmaximize();
-    else win.maximize();
-    return win.isMaximized();
-  });
-  ipcMain.handle('window:close', () => {
-    const win = BrowserWindow.getFocusedWindow() || mainWindow;
-    win?.close();
-  });
-  ipcMain.handle('window:isMaximized', () => {
-    const win = BrowserWindow.getFocusedWindow() || mainWindow;
-    return Boolean(win?.isMaximized());
-  });
 
   ipcMain.on('open-settings', () => {
     dialog.showMessageBox(mainWindow, {
