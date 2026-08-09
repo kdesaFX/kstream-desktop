@@ -5,7 +5,7 @@ Windows desktop shell for [kstream](https://github.com/kdesaFX/kstream).
 ## Features (Core v1)
 
 - Installable NSIS `.exe` (`kstream-Setup.exe`)
-- Loads your live kstream site (default `https://kstream.lol`)
+- Loads your live kstream site (default `https://kstream-one.vercel.app`; later `https://kdesa.stream`)
 - Native scraping via built-in extension bridge (no Chrome extension)
 - System tray + close-to-tray
 - Auto-updates from GitHub Releases

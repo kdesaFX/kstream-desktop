@@ -18,7 +18,10 @@ const SimpleStore = require('./storage');
 
 const ROOT = path.join(__dirname, '..', '..');
 const PRELOAD = path.join(__dirname, '..', 'preload', 'preload.js');
-const DEFAULT_STREAM_URL = process.env.KSTREAM_URL || 'https://kstream.lol';
+// Temporary production host until kdesa.stream is live on the VPS.
+const DEFAULT_STREAM_URL =
+  process.env.KSTREAM_URL || 'https://kstream-one.vercel.app';
+const LEGACY_STREAM_HOSTS = new Set(['kstream.lol', 'www.kstream.lol']);
 
 const store = new SimpleStore({
   configName: 'user-preferences',
@@ -32,6 +35,24 @@ const store = new SimpleStore({
 let mainWindow = null;
 let tray = null;
 let isQuitting = false;
+
+function migrateStreamUrl() {
+  const current = store.get('streamUrl', DEFAULT_STREAM_URL);
+  if (!current || typeof current !== 'string') {
+    store.set('streamUrl', DEFAULT_STREAM_URL);
+    return;
+  }
+  try {
+    const host = new URL(current).hostname.toLowerCase();
+    if (LEGACY_STREAM_HOSTS.has(host)) {
+      store.set('streamUrl', DEFAULT_STREAM_URL);
+    }
+  } catch {
+    store.set('streamUrl', DEFAULT_STREAM_URL);
+  }
+}
+
+migrateStreamUrl();
 
 function getStreamUrl() {
   return store.get('streamUrl', DEFAULT_STREAM_URL) || DEFAULT_STREAM_URL;

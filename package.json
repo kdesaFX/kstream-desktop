@@ -1,7 +1,7 @@
 {
   "name": "kstream-desktop",
   "productName": "kstream",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "kstream Windows desktop app — native scraping, auto-updates, system tray",
   "author": "kdesaFX",
   "license": "MIT",
