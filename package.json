@@ -1,12 +1,58 @@
 {
   "name": "kstream-desktop",
   "productName": "kstream",
-  "version": "1.1.6",
+  "version": "1.1.8",
   "description": "kstream Windows desktop app — branded setup, native scraping, auto-updates, system tray",
   "author": "kdesaFX",
   "license": "MIT",
   "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win",
+    "build:win": "electron-builder --win",
+    "dist": "electron-builder --win --publish=never"
+  },
   "dependencies": {
     "electron-updater": "^6.7.3"
+  },
+  "devDependencies": {
+    "electron": "^39.3.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.kdesafx.kstream",
+    "productName": "kstream",
+    "directories": {
+      "output": "dist"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "kdesaFX",
+      "repo": "kstream-desktop"
+    },
+    "files": [
+      "src/**/*",
+      "logo.png",
+      "icon.ico",
+      "package.json"
+    ],
+    "win": {
+      "icon": "icon.ico",
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "requestedExecutionLevel": "asInvoker",
+      "executableName": "kstream"
+    },
+    "portable": {
+      "artifactName": "kstream-Setup.${ext}",
+      "requestExecutionLevel": "user",
+      "unpackDirName": "kstream-portable"
+    }
   }
 }
