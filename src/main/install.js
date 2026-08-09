@@ -3,10 +3,17 @@
 const fs = require('fs');
 const path = require('path');
 const { app, shell } = require('electron');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 
 const PRODUCT = 'kstream';
 const EXE_NAME = 'kstream.exe';
+
+function sleepSync(ms) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    // busy wait — install path is short-lived and must stay sync-friendly
+  }
+}
 
 function getLocalAppData() {
   if (process.env.LOCALAPPDATA) {
@@ -121,35 +128,84 @@ function createShortcuts(exePath, installDir) {
   shell.writeShortcutLink(startMenu, 'create', shortcut);
 }
 
+/** Kill only kstream processes whose exe lives under installDir (never our current process). */
+function stopProcessesUnder(dir) {
+  if (process.platform !== 'win32') return;
+  const target = path.resolve(dir).toLowerCase().replace(/'/g, "''");
+  const selfPid = process.pid;
+  const script = `
+$target = '${target}'
+Get-CimInstance Win32_Process -Filter "Name = 'kstream.exe'" -ErrorAction SilentlyContinue | ForEach-Object {
+  $exe = $_.ExecutablePath
+  if (-not $exe) { return }
+  if ($_.ProcessId -eq ${selfPid}) { return }
+  if ($exe.ToLower().StartsWith($target)) {
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+  }
+}
+Start-Sleep -Milliseconds 400
+`;
+  try {
+    execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+      timeout: 20000,
+      windowsHide: true,
+    });
+  } catch (err) {
+    console.warn('[kstream-desktop] stopProcessesUnder failed', err.message);
+  }
+}
+
+function removePathWithRetry(target, attempts = 10) {
+  if (!fs.existsSync(target)) return;
+  let lastErr = null;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      fs.rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });
+      if (!fs.existsSync(target)) return;
+    } catch (err) {
+      lastErr = err;
+    }
+    sleepSync(250 + i * 100);
+  }
+  if (fs.existsSync(target)) {
+    throw lastErr || new Error(`Could not remove locked path: ${target}`);
+  }
+}
+
 function copyAppToInstallDir(installDir) {
   const appRoot = path.resolve(getAppRoot());
   const dest = path.resolve(installDir);
+  const staging = `${dest}.staging`;
+  const backup = `${dest}.bak`;
 
   if (appRoot.toLowerCase() === dest.toLowerCase()) {
     throw new Error('Already running from the install folder.');
   }
 
-  fs.mkdirSync(dest, { recursive: true });
+  // Close any previous install still holding app.asar
+  stopProcessesUnder(dest);
+  stopProcessesUnder(backup);
+  stopProcessesUnder(staging);
 
-  // Fresh install directory (keep user data elsewhere under AppData)
-  for (const entry of fs.readdirSync(dest)) {
-    fs.rmSync(path.join(dest, entry), { recursive: true, force: true });
-  }
+  removePathWithRetry(staging);
+  removePathWithRetry(backup);
 
-  fs.cpSync(appRoot, dest, {
+  fs.mkdirSync(staging, { recursive: true });
+  fs.cpSync(appRoot, staging, {
     recursive: true,
     filter: (src) => {
       const base = path.basename(src).toLowerCase();
-      // Skip noisy / session junk if present in portable unpack dir
       if (base === 'kstream-data') return false;
       if (base === 'kstream-portable.json') return false;
       if (base.endsWith('.log')) return false;
+      if (base.endsWith('.staging')) return false;
+      if (base.endsWith('.bak')) return false;
       return true;
     },
   });
 
   fs.writeFileSync(
-    getInstalledMarkerPath(),
+    path.join(staging, '.kstream-installed'),
     JSON.stringify(
       {
         version: app.getVersion(),
@@ -160,11 +216,36 @@ function copyAppToInstallDir(installDir) {
     ),
     'utf8',
   );
+
+  if (fs.existsSync(dest)) {
+    stopProcessesUnder(dest);
+    sleepSync(300);
+    try {
+      fs.renameSync(dest, backup);
+    } catch {
+      // Rename can fail if Explorer has the folder open — fall back to delete
+      removePathWithRetry(dest);
+    }
+  }
+
+  try {
+    fs.renameSync(staging, dest);
+  } catch (err) {
+    // Last resort: copy staging → dest
+    fs.mkdirSync(dest, { recursive: true });
+    fs.cpSync(staging, dest, { recursive: true });
+    removePathWithRetry(staging);
+  }
+
+  try {
+    removePathWithRetry(backup);
+  } catch (err) {
+    console.warn('[kstream-desktop] left backup install folder (locked):', backup, err.message);
+  }
 }
 
 async function installToAppData() {
   if (!isPackaged()) {
-    // Dev: pretend install succeeded so welcome can be skipped next time
     return {
       ok: true,
       dev: true,
@@ -174,7 +255,17 @@ async function installToAppData() {
   }
 
   const installDir = getInstallDir();
-  copyAppToInstallDir(installDir);
+  try {
+    copyAppToInstallDir(installDir);
+  } catch (err) {
+    const msg = String(err && err.message ? err.message : err);
+    if (/ebusy|eperm|resource busy|locked/i.test(msg)) {
+      throw new Error(
+        'install folder is locked by another kstream process. close other kstream windows and try again.',
+      );
+    }
+    throw err;
+  }
 
   const exePath = path.join(installDir, EXE_NAME);
   if (!fs.existsSync(exePath)) {
