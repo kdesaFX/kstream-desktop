@@ -12,7 +12,6 @@ const {
   dialog,
 } = require('electron');
 const path = require('path');
-const { pathToFileURL } = require('url');
 const { autoUpdater } = require('electron-updater');
 const { handlers, setupInterceptors } = require('./ipc-handlers');
 const SimpleStore = require('./storage');
