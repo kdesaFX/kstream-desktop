@@ -12,6 +12,14 @@ const hostsWithCookiesAccess = [
   /^(?:.*\.)?levidia\.ch$/,
   /^(?:.*\.)?wootly\.ch$/,
   /^(?:.*\.)?multimovies\.(?:sbs|online|cloud)$/,
+  // 🔥 / empty-flag scrapers (VidLink etc.)
+  /^(?:.*\.)?vidlink\.pro$/,
+  /^(?:.*\.)?enc-dec\.app$/,
+  /^(?:.*\.)?vidrock\.net$/,
+  /^(?:.*\.)?embedsu\.(?:net|org|com)$/,
+  /^(?:.*\.)?rgshows\.(?:me|to)$/,
+  /^(?:.*\.)?warezcdn\.com$/,
+  /^(?:.*\.)?zoechip\.(?:com|to)$/,
 ];
 
 const CHROME_UA =
@@ -106,30 +114,154 @@ function getMakeFullUrl(url, body) {
   return u.toString();
 }
 
-function mapBodyToFetchBody(body, bodyType) {
+function mapBodyToNetBody(body, bodyType, headers) {
+  if (body == null) return null;
+
   if (bodyType === 'FormData') {
-    const formData = new FormData();
+    const params = new URLSearchParams();
     if (Array.isArray(body)) {
       body.forEach(([key, value]) => {
-        formData.append(key, value.toString());
+        params.append(String(key), String(value));
       });
     } else if (typeof body === 'object') {
       Object.entries(body).forEach(([key, value]) => {
-        formData.append(key, value.toString());
+        params.append(String(key), String(value));
       });
     }
-    return formData;
+    if (!Object.keys(headers).some((k) => k.toLowerCase() === 'content-type')) {
+      headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    }
+    return params.toString();
   }
+
   if (bodyType === 'URLSearchParams') {
-    return new URLSearchParams(body);
+    const params =
+      body instanceof URLSearchParams
+        ? body
+        : new URLSearchParams(
+            typeof body === 'object' && !Array.isArray(body) ? body : undefined,
+          );
+    if (!Object.keys(headers).some((k) => k.toLowerCase() === 'content-type')) {
+      headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    }
+    return params.toString();
   }
-  if (bodyType === 'object') {
-    return JSON.stringify(body);
+
+  if (bodyType === 'object' || (typeof body === 'object' && !Buffer.isBuffer(body))) {
+    if (!Object.keys(headers).some((k) => k.toLowerCase() === 'content-type')) {
+      headers['Content-Type'] = 'application/json';
+    }
+    return typeof body === 'string' ? body : JSON.stringify(body);
   }
-  if (bodyType === 'string') {
+
+  if (bodyType === 'string' || typeof body === 'string') {
     return body;
   }
+
   return body;
+}
+
+/**
+ * Privileged Chromium request — Origin/Referer/Sec-Fetch-* actually leave the client
+ * (session.fetch / browser fetch strip them as forbidden headers).
+ */
+function netRequest(url, { method = 'GET', headers = {}, body = null, timeoutMs = 20000 }) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let finalUrl = url;
+    const chunks = [];
+
+    const req = net.request({
+      method,
+      url,
+      session: session.defaultSession,
+      redirect: 'follow',
+      useSessionCookies: true,
+    });
+
+    for (const [name, value] of Object.entries(headers)) {
+      if (value == null) continue;
+      try {
+        // net.request is allowed to set Origin / Referer / Sec-Fetch-*.
+        req.setHeader(name, String(value));
+      } catch (err) {
+        console.warn('[kstream-desktop] skip header', name, err.message);
+      }
+    }
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        req.abort();
+      } catch {
+        // ignore
+      }
+      reject(new Error(`Request timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    req.on('redirect', (statusCode, methodName, redirectUrl) => {
+      finalUrl = redirectUrl;
+    });
+
+    req.on('response', (response) => {
+      response.on('data', (chunk) => {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      });
+      response.on('error', (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(err);
+      });
+      response.on('end', () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        const buf = Buffer.concat(chunks);
+        const contentType =
+          (response.headers['content-type'] &&
+            [].concat(response.headers['content-type'])[0]) ||
+          '';
+        let parsedBody;
+        const text = buf.toString('utf8');
+        if (String(contentType).includes('application/json')) {
+          try {
+            parsedBody = JSON.parse(text);
+          } catch {
+            parsedBody = text;
+          }
+        } else {
+          parsedBody = text;
+        }
+
+        const responseHeaders = {};
+        Object.entries(response.headers || {}).forEach(([key, val]) => {
+          responseHeaders[key] = Array.isArray(val) ? val.join(', ') : String(val);
+        });
+
+        resolve({
+          statusCode: response.statusCode,
+          headers: responseHeaders,
+          finalUrl,
+          body: parsedBody,
+          rawHeaders: response.headers,
+        });
+      });
+    });
+
+    req.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    if (body != null && body !== '') {
+      req.write(typeof body === 'string' || Buffer.isBuffer(body) ? body : String(body));
+    }
+    req.end();
+  });
 }
 
 function normalizeHeaderMap(headers) {
@@ -193,7 +325,7 @@ const handlers = {
   async hello() {
     return {
       success: true,
-      version: '1.1.8',
+      version: '1.1.9',
       type: 'desktop',
       allowed: true,
       hasPermission: true,
@@ -237,43 +369,27 @@ const handlers = {
       const url = getMakeFullUrl(body.url, body);
       const method = body.method || 'GET';
       const headers = normalizeHeaderMap(body.headers);
+      const netBody = mapBodyToNetBody(body.body, body.bodyType, headers);
 
-      // Mirror extension: force forbidden headers via webRequest for this host
+      // Still install a matching webRequest rule so follow-up media / CORS
+      // responses for this host get Access-Control-* rewritten during scrape.
       tempRuleId = installTempScrapeRule(url, headers);
 
-      const fetchOptions = {
+      const response = await netRequest(url, {
         method,
         headers,
-        body: mapBodyToFetchBody(body.body, body.bodyType),
-        signal: AbortSignal.timeout(20000),
-      };
-
-      let response;
-      if (session.defaultSession && typeof session.defaultSession.fetch === 'function') {
-        response = await session.defaultSession.fetch(url, fetchOptions);
-      } else if (typeof net.fetch === 'function') {
-        response = await net.fetch(url, fetchOptions);
-      } else {
-        response = await fetch(url, fetchOptions);
-      }
-
-      const contentType = response.headers.get('content-type') || '';
-      const responseBody = contentType.includes('application/json')
-        ? await response.json()
-        : await response.text();
-
-      const finalUrl = response.url || url;
-      const cookies = await session.defaultSession.cookies.get({ url: finalUrl });
-
-      const responseHeaders = {};
-      response.headers.forEach((val, key) => {
-        responseHeaders[key] = val;
+        body: netBody,
+        timeoutMs: 20000,
       });
 
-      // Prefer real multi Set-Cookie if present
-      if (typeof response.headers.getSetCookie === 'function') {
-        const lines = response.headers.getSetCookie();
-        if (lines && lines.length) {
+      const finalUrl = response.finalUrl || url;
+      const cookies = await session.defaultSession.cookies.get({ url: finalUrl });
+      const responseHeaders = { ...response.headers };
+
+      // Prefer multi Set-Cookie lines when Chromium exposed them as an array.
+      if (response.rawHeaders && response.rawHeaders['set-cookie']) {
+        const lines = [].concat(response.rawHeaders['set-cookie']);
+        if (lines.length) {
           responseHeaders['Set-Cookie'] = lines.join('\n');
         }
       }
@@ -285,7 +401,6 @@ const handlers = {
           responseHeaders['Set-Cookie'] = lines.join('\n');
         }
         responseHeaders['Access-Control-Allow-Credentials'] = 'true';
-        // Also expose a Cookie-style snapshot some parsers expect
         const cookieHeader = cookieHeaderFromJar(cookies);
         if (cookieHeader) responseHeaders['X-Desktop-Cookies'] = cookieHeader;
       }
@@ -293,10 +408,10 @@ const handlers = {
       return {
         success: true,
         response: {
-          statusCode: response.status,
+          statusCode: response.statusCode,
           headers: responseHeaders,
           finalUrl,
-          body: responseBody,
+          body: response.body,
         },
       };
     } catch (err) {
