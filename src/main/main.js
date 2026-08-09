@@ -29,9 +29,7 @@ const {
 configurePortableUserData();
 
 // Look like Chrome, not Electron — many CDNs/WAFs block Electron UAs.
-if (app.isPackaged || true) {
-  app.userAgentFallback = CHROME_UA;
-}
+app.userAgentFallback = CHROME_UA;
 
 const ROOT = path.join(__dirname, '..', '..');
 const PRELOAD = path.join(__dirname, '..', 'preload', 'preload.js');
