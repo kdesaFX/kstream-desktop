@@ -1,5 +1,6 @@
-const { shell, session, net } = require('electron');
-const { app } = require('electron'); // for getting cookies from session
+'use strict';
+
+const { session, net } = require('electron');
 
 // --- Constants & Utils ---
 
@@ -13,8 +14,20 @@ const hostsWithCookiesAccess = [
   /^(?:.*\.)?multimovies\.(?:sbs|online|cloud)$/,
 ];
 
+const CHROME_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+let scrapeRuleSeq = 900000;
+
 function canAccessCookies(host) {
   return hostsWithCookiesAccess.some((regex) => regex.test(host));
+}
+
+function domainMatches(hostname, domain) {
+  if (!hostname || !domain) return false;
+  const h = hostname.toLowerCase();
+  const d = domain.toLowerCase().replace(/^\./, '');
+  return h === d || h.endsWith(`.${d}`);
 }
 
 const modifiableResponseHeaders = new Set([
@@ -27,7 +40,6 @@ const modifiableResponseHeaders = new Set([
 ]);
 
 // --- Dynamic Rules State ---
-// Map<ruleId, RuleObject>
 const activeRules = new Map();
 
 function compileRegex(pattern) {
@@ -63,7 +75,7 @@ function getMatchingRules(url, hostname) {
   for (const rule of activeRules.values()) {
     let match = false;
     if (hostnameLower && rule.__normalizedTargetDomains) {
-      if (rule.__normalizedTargetDomains.some((domain) => hostnameLower.includes(domain))) {
+      if (rule.__normalizedTargetDomains.some((domain) => domainMatches(hostnameLower, domain))) {
         match = true;
       }
     }
@@ -77,8 +89,6 @@ function getMatchingRules(url, hostname) {
 }
 
 function getMakeFullUrl(url, body) {
-  // extension/src/utils/fetcher.ts
-
   let leftSide = body && body.baseUrl ? body.baseUrl : '';
   let rightSide = url;
 
@@ -86,7 +96,6 @@ function getMakeFullUrl(url, body) {
   if (rightSide.startsWith('/')) rightSide = rightSide.slice(1);
 
   const fullUrl = leftSide + rightSide;
-
   const u = new URL(fullUrl);
 
   if (body && body.query) {
@@ -123,13 +132,68 @@ function mapBodyToFetchBody(body, bodyType) {
   return body;
 }
 
+function normalizeHeaderMap(headers) {
+  const out = {};
+  if (!headers || typeof headers !== 'object') return out;
+  Object.entries(headers).forEach(([key, value]) => {
+    if (value == null) return;
+    out[key] = String(value);
+  });
+  if (!Object.keys(out).some((k) => k.toLowerCase() === 'user-agent')) {
+    out['User-Agent'] = CHROME_UA;
+  }
+  return out;
+}
+
+/**
+ * Install a temporary webRequest rule so Origin/Referer/UA/Cookie actually leave Chromium
+ * (same role as the extension's temporary DNR rule).
+ */
+function installTempScrapeRule(url, headers) {
+  let hostname = '';
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    return null;
+  }
+  const ruleId = scrapeRuleSeq++;
+  updateRule({
+    ruleId,
+    targetDomains: [hostname],
+    requestHeaders: normalizeHeaderMap(headers),
+    responseHeaders: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
+      'Access-Control-Allow-Headers': '*',
+    },
+  });
+  return ruleId;
+}
+
+function cookieHeaderFromJar(cookies) {
+  if (!Array.isArray(cookies) || cookies.length === 0) return '';
+  return cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+}
+
+function setCookieLinesFromJar(cookies) {
+  if (!Array.isArray(cookies) || cookies.length === 0) return [];
+  return cookies.map((c) => {
+    const parts = [`${c.name}=${c.value}`];
+    if (c.domain) parts.push(`Domain=${c.domain}`);
+    if (c.path) parts.push(`Path=${c.path}`);
+    if (c.secure) parts.push('Secure');
+    if (c.httpOnly) parts.push('HttpOnly');
+    return parts.join('; ');
+  });
+}
+
 // --- IPC Handlers ---
 
 const handlers = {
   async hello() {
     return {
       success: true,
-      version: '1.0.0',
+      version: '1.1.8',
       type: 'desktop',
       allowed: true,
       hasPermission: true,
@@ -138,12 +202,6 @@ const handlers = {
 
   async openPage(body) {
     if (body && body.page) {
-      // In extension this opens internal pages.
-      // But the app might ask to open external URLs?
-      // Check usages. content/movie-web.ts says relayMessage({ name: 'openPage' })
-      // Usually used for "PermissionGrant" etc.
-      // If body.page is a URL or external, open it.
-      // For now, log it.
       console.log('Request to openPage:', body);
     }
     return { success: true };
@@ -151,10 +209,8 @@ const handlers = {
 
   async prepareStream(body) {
     try {
-      // body contains ruleId, targetDomains, requestHeaders, responseHeaders
       if (!body) throw new Error('No body');
 
-      // Filter response headers like extension does
       const filteredResponseHeaders = {};
       if (body.responseHeaders) {
         Object.keys(body.responseHeaders).forEach((key) => {
@@ -174,30 +230,24 @@ const handlers = {
   },
 
   async makeRequest(body) {
+    let tempRuleId = null;
     try {
-      // body: { url, method, headers, body, bodyType }
       if (!body.url) throw new Error('No url');
 
       const url = getMakeFullUrl(body.url, body);
       const method = body.method || 'GET';
-      const headers = body.headers || {};
+      const headers = normalizeHeaderMap(body.headers);
 
-      // In Node fetch, we can just pass headers.
-      // We do NOT set dynamic rules for the Main Process fetch because we are not a browser.
-      // We can bypass CORS naturally.
-
-      // Handle Cookie header if needed?
-      // Electron session handles cookies automatically if we don't interfere.
-      // But if the request explicitly provides a 'Cookie' header in `headers`, use it.
+      // Mirror extension: force forbidden headers via webRequest for this host
+      tempRuleId = installTempScrapeRule(url, headers);
 
       const fetchOptions = {
         method,
         headers,
         body: mapBodyToFetchBody(body.body, body.bodyType),
+        signal: AbortSignal.timeout(20000),
       };
 
-      // Prefer Electron session fetch so cookies / TLS match the app session.
-      // Falls back to global fetch if unavailable.
       let response;
       if (session.defaultSession && typeof session.defaultSession.fetch === 'function') {
         response = await session.defaultSession.fetch(url, fetchOptions);
@@ -207,26 +257,37 @@ const handlers = {
         response = await fetch(url, fetchOptions);
       }
 
-      const contentType = response.headers.get('content-type');
-      const responseBody =
-        contentType && contentType.includes('application/json') ? await response.json() : await response.text();
+      const contentType = response.headers.get('content-type') || '';
+      const responseBody = contentType.includes('application/json')
+        ? await response.json()
+        : await response.text();
 
-      // Cookies
-      // extension uses chrome.cookies.getAll({ url: response.url })
-      // We use session.defaultSession.cookies.get({ url: response.url })
-      const cookies = await session.defaultSession.cookies.get({ url: response.url });
+      const finalUrl = response.url || url;
+      const cookies = await session.defaultSession.cookies.get({ url: finalUrl });
 
-      // Construct response headers object
       const responseHeaders = {};
       response.headers.forEach((val, key) => {
         responseHeaders[key] = val;
       });
 
-      // Add Set-Cookie mock if allowed
-      const hostname = new URL(url).hostname;
+      // Prefer real multi Set-Cookie if present
+      if (typeof response.headers.getSetCookie === 'function') {
+        const lines = response.headers.getSetCookie();
+        if (lines && lines.length) {
+          responseHeaders['Set-Cookie'] = lines.join('\n');
+        }
+      }
+
+      const hostname = new URL(finalUrl).hostname;
       if (canAccessCookies(hostname)) {
-        responseHeaders['Set-Cookie'] = cookies.map((c) => `${c.name}=${c.value}`).join(', ');
+        const lines = setCookieLinesFromJar(cookies);
+        if (lines.length) {
+          responseHeaders['Set-Cookie'] = lines.join('\n');
+        }
         responseHeaders['Access-Control-Allow-Credentials'] = 'true';
+        // Also expose a Cookie-style snapshot some parsers expect
+        const cookieHeader = cookieHeaderFromJar(cookies);
+        if (cookieHeader) responseHeaders['X-Desktop-Cookies'] = cookieHeader;
       }
 
       return {
@@ -234,28 +295,26 @@ const handlers = {
         response: {
           statusCode: response.status,
           headers: responseHeaders,
-          finalUrl: response.url,
+          finalUrl,
           body: responseBody,
         },
       };
     } catch (err) {
       console.error('makeRequest error:', err);
       return { success: false, error: err.message };
+    } finally {
+      if (tempRuleId != null) removeRule(tempRuleId);
     }
   },
 };
 
 // --- Network Interceptor ---
 
-/**
- * @param {Electron.Session} sess
- * @param {{ getStreamHostname?: () => string | null }} [options] - If getStreamHostname is provided, requests to that hostname get X-P-Stream-Client: desktop
- */
 function setupInterceptors(sess, options = {}) {
   const filter = { urls: ['<all_urls>'] };
 
   sess.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
-    let requestHeaders = details.requestHeaders;
+    const requestHeaders = { ...details.requestHeaders };
     let parsedHostname = null;
     try {
       parsedHostname = new URL(details.url).hostname;
@@ -263,7 +322,6 @@ function setupInterceptors(sess, options = {}) {
       parsedHostname = null;
     }
 
-    // Add app identity header for the configured stream URL only (so the site knows it's in the app, not a browser)
     const getStreamHostname = options.getStreamHostname;
     if (typeof getStreamHostname === 'function' && parsedHostname) {
       try {
@@ -275,7 +333,20 @@ function setupInterceptors(sess, options = {}) {
           }
         }
       } catch (_) {
-        // ignore URL parse errors
+        // ignore
+      }
+    }
+
+    // Default to Chrome UA unless a rule overrides it
+    const hasUa = Object.keys(requestHeaders).some((k) => k.toLowerCase() === 'user-agent');
+    if (!hasUa) {
+      requestHeaders['User-Agent'] = CHROME_UA;
+    } else {
+      // Strip Electron fingerprint if present
+      for (const key of Object.keys(requestHeaders)) {
+        if (key.toLowerCase() === 'user-agent' && /Electron\//i.test(requestHeaders[key])) {
+          requestHeaders[key] = CHROME_UA;
+        }
       }
     }
 
@@ -288,11 +359,11 @@ function setupInterceptors(sess, options = {}) {
       }
     }
 
-    callback({ requestHeaders: requestHeaders });
+    callback({ requestHeaders });
   });
 
   sess.webRequest.onHeadersReceived(filter, (details, callback) => {
-    let responseHeaders = { ...details.responseHeaders }; // Clone headers
+    const responseHeaders = { ...details.responseHeaders };
 
     let parsedHostname = null;
     try {
@@ -304,7 +375,6 @@ function setupInterceptors(sess, options = {}) {
     const ruleMatches = getMatchingRules(details.url, parsedHostname);
 
     if (ruleMatches.length > 0) {
-      // Helper to remove header case-insensitively
       const removeHeader = (name) => {
         const lowerName = name.toLowerCase();
         Object.keys(responseHeaders).forEach((key) => {
@@ -314,7 +384,6 @@ function setupInterceptors(sess, options = {}) {
         });
       };
 
-      // Apply responseHeaders from rules
       ruleMatches.forEach((rule) => {
         if (rule.responseHeaders) {
           Object.entries(rule.responseHeaders).forEach(([name, value]) => {
@@ -324,7 +393,6 @@ function setupInterceptors(sess, options = {}) {
         }
       });
 
-      // Always add/overwrite CORS if rule matches
       removeHeader('Access-Control-Allow-Origin');
       removeHeader('Access-Control-Allow-Methods');
       removeHeader('Access-Control-Allow-Headers');
@@ -333,20 +401,14 @@ function setupInterceptors(sess, options = {}) {
       responseHeaders['Access-Control-Allow-Origin'] = ['*'];
       responseHeaders['Access-Control-Allow-Methods'] = ['GET, POST, PUT, DELETE, PATCH, OPTIONS'];
       responseHeaders['Access-Control-Allow-Headers'] = ['*'];
-      // Note: Access-Control-Allow-Credentials cannot be true if Origin is * in strict browsers,
-      // but often extensions force this.
-      // If we want credentials, we usually need to echo the Origin.
-      // The extension sets '*' for Origin.
-      // Let's check extension logic:
-      // responseHeaders: [ { header: 'Access-Control-Allow-Origin', value: '*' }, ... ]
-      // So we stick to '*'
     }
 
-    callback({ responseHeaders: responseHeaders });
+    callback({ responseHeaders });
   });
 }
 
 module.exports = {
   handlers,
   setupInterceptors,
+  CHROME_UA,
 };

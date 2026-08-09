@@ -13,7 +13,7 @@ const {
 } = require('electron');
 const path = require('path');
 const { autoUpdater } = require('electron-updater');
-const { handlers, setupInterceptors } = require('./ipc-handlers');
+const { handlers, setupInterceptors, CHROME_UA } = require('./ipc-handlers');
 const SimpleStore = require('./storage');
 const {
   configurePortableUserData,
@@ -27,6 +27,11 @@ const {
 
 // Must run before userData / store is touched.
 configurePortableUserData();
+
+// Look like Chrome, not Electron — many CDNs/WAFs block Electron UAs.
+if (app.isPackaged || true) {
+  app.userAgentFallback = CHROME_UA;
+}
 
 const ROOT = path.join(__dirname, '..', '..');
 const PRELOAD = path.join(__dirname, '..', 'preload', 'preload.js');
@@ -208,6 +213,12 @@ function createMainWindow() {
       spellcheck: false,
     },
   });
+
+  try {
+    mainWindow.webContents.setUserAgent(CHROME_UA);
+  } catch (_) {
+    // ignore
+  }
 
   mainWindow.setMenuBarVisibility(false);
 
