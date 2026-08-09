@@ -12,12 +12,28 @@ const {
   dialog,
 } = require('electron');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const { autoUpdater } = require('electron-updater');
 const { handlers, setupInterceptors } = require('./ipc-handlers');
 const SimpleStore = require('./storage');
+const {
+  configurePortableUserData,
+  needsSetup,
+  writePortableMarker,
+  installToAppData,
+  launchInstalledAndExit,
+  getSetupInfo,
+  getInstallDir,
+} = require('./install');
+
+// Must run before userData / store is touched.
+configurePortableUserData();
 
 const ROOT = path.join(__dirname, '..', '..');
 const PRELOAD = path.join(__dirname, '..', 'preload', 'preload.js');
+const SETUP_PRELOAD = path.join(__dirname, '..', 'preload', 'setup-preload.js');
+const WELCOME_HTML = path.join(__dirname, '..', 'renderer', 'welcome', 'index.html');
+
 // Temporary production host until kdesa.stream is live on the VPS.
 const DEFAULT_STREAM_URL =
   process.env.KSTREAM_URL || 'https://kstream-one.vercel.app';
@@ -29,12 +45,14 @@ const store = new SimpleStore({
     windowBounds: { width: 1280, height: 800 },
     streamUrl: DEFAULT_STREAM_URL,
     closeToTray: true,
+    runMode: null,
   },
 });
 
 let mainWindow = null;
 let tray = null;
 let isQuitting = false;
+let showingSetup = false;
 
 function migrateStreamUrl() {
   const current = store.get('streamUrl', DEFAULT_STREAM_URL);
@@ -67,6 +85,8 @@ function getStreamHostname() {
 }
 
 function createTray(win) {
+  if (tray) return tray;
+
   const iconPath = path.join(ROOT, 'logo.png');
   let image = nativeImage.createFromPath(iconPath);
   if (!image.isEmpty()) {
@@ -107,9 +127,53 @@ function createTray(win) {
     win.show();
     win.focus();
   });
+
+  return tray;
 }
 
-function createWindow() {
+function createSetupWindow() {
+  showingSetup = true;
+
+  mainWindow = new BrowserWindow({
+    width: 520,
+    height: 640,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    show: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#030303',
+    icon: path.join(ROOT, 'logo.png'),
+    title: 'kstream',
+    webPreferences: {
+      preload: SETUP_PRELOAD,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      spellcheck: false,
+    },
+  });
+
+  mainWindow.setMenuBarVisibility(false);
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+  });
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+    if (showingSetup && !isQuitting) {
+      // Closed setup without choosing — exit
+      app.quit();
+    }
+  });
+
+  mainWindow.loadFile(WELCOME_HTML);
+  return mainWindow;
+}
+
+function createMainWindow() {
+  showingSetup = false;
   const bounds = store.get('windowBounds', { width: 1280, height: 800 });
   const iconPath = path.join(ROOT, 'logo.png');
 
@@ -172,12 +236,65 @@ function createWindow() {
   return mainWindow;
 }
 
+function openAppAfterSetup() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    showingSetup = false;
+    mainWindow.removeAllListeners('closed');
+    mainWindow.close();
+    mainWindow = null;
+  }
+  createMainWindow();
+  setupAutoUpdater();
+}
+
+function registerSetupIpc() {
+  ipcMain.handle('setup:getInfo', async () => {
+    const info = getSetupInfo();
+    const logoFile = path.join(ROOT, 'logo.png');
+    return {
+      ...info,
+      installDirShort: 'appdata\\programs\\kstream',
+      logoUrl: pathToFileURL(logoFile).href,
+    };
+  });
+
+  ipcMain.handle('setup:install', async () => {
+    try {
+      const result = await installToAppData();
+      store.set('runMode', 'installed');
+
+      if (result.dev) {
+        openAppAfterSetup();
+        return result;
+      }
+
+      isQuitting = true;
+      launchInstalledAndExit(result.exePath);
+      return result;
+    } catch (err) {
+      console.error('[kstream-desktop] install failed', err);
+      throw new Error(err.message || 'Install failed');
+    }
+  });
+
+  ipcMain.handle('setup:portable', async () => {
+    try {
+      writePortableMarker();
+      store.set('runMode', 'portable');
+      openAppAfterSetup();
+      return { ok: true };
+    } catch (err) {
+      console.error('[kstream-desktop] portable setup failed', err);
+      throw new Error(err.message || 'Portable setup failed');
+    }
+  });
+}
+
 function registerIpc() {
   Object.entries(handlers).forEach(([channel, handler]) => {
     ipcMain.handle(channel, (_event, body) => handler(body));
   });
 
-  // No-op channels the web may fire
   ipcMain.handle('updateMediaMetadata', async () => ({ success: true }));
   ipcMain.handle('openOfflineApp', async () => ({ success: true }));
 
@@ -187,9 +304,10 @@ function registerIpc() {
       title: 'kstream',
       message: 'App settings',
       detail:
-        'Core v1 loads your kstream site with native scraping.\n\n' +
-        `URL: ${getStreamUrl()}\n\n` +
-        'Offline downloads and advanced desktop settings come in a later update.\n\n' +
+        'Core loads your kstream site with native scraping.\n\n' +
+        `URL: ${getStreamUrl()}\n` +
+        `Mode: ${store.get('runMode', 'unknown')}\n` +
+        `Install folder: ${getInstallDir()}\n\n` +
         'Unsigned builds may show a Windows SmartScreen warning — choose More info → Run anyway.',
     });
   });
@@ -240,24 +358,45 @@ function setupAutoUpdater() {
   }, 5000);
 }
 
-app.whenReady().then(() => {
-  setupInterceptors(session.defaultSession, { getStreamHostname });
-  registerIpc();
-  createWindow();
-  setupAutoUpdater();
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-    else if (mainWindow) {
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.show();
       mainWindow.focus();
     }
   });
-});
+
+  app.whenReady().then(() => {
+    setupInterceptors(session.defaultSession, { getStreamHostname });
+    registerIpc();
+    registerSetupIpc();
+
+    if (needsSetup(store)) {
+      createSetupWindow();
+    } else {
+      createMainWindow();
+      setupAutoUpdater();
+    }
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        if (needsSetup(store)) createSetupWindow();
+        else createMainWindow();
+      } else if (mainWindow) {
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    });
+  });
+}
 
 app.on('before-quit', () => {
   isQuitting = true;
-  if (mainWindow && !mainWindow.isDestroyed()) {
+  if (mainWindow && !mainWindow.isDestroyed() && !showingSetup) {
     const { width, height, x, y } = mainWindow.getBounds();
     store.set('windowBounds', { width, height, x, y });
   }
@@ -265,8 +404,7 @@ app.on('before-quit', () => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
-    // Keep running in tray when close-to-tray is on
-    if (!store.get('closeToTray', true)) {
+    if (showingSetup || !store.get('closeToTray', true)) {
       app.quit();
     }
   }

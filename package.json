@@ -1,8 +1,8 @@
 {
   "name": "kstream-desktop",
   "productName": "kstream",
-  "version": "1.0.2",
-  "description": "kstream Windows desktop app — native scraping, auto-updates, system tray",
+  "version": "1.1.0",
+  "description": "kstream Windows desktop app — branded setup, native scraping, auto-updates, system tray",
   "author": "kdesaFX",
   "license": "MIT",
   "main": "src/main/main.js",
@@ -40,7 +40,7 @@
       "icon": "icon.ico",
       "target": [
         {
-          "target": "nsis",
+          "target": "portable",
           "arch": [
             "x64"
           ]
@@ -49,22 +49,10 @@
       "requestedExecutionLevel": "asInvoker",
       "executableName": "kstream"
     },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "kstream",
-      "deleteAppDataOnUninstall": false,
+    "portable": {
       "artifactName": "kstream-Setup.${ext}",
-      "runAfterFinish": true,
-      "allowElevation": false,
-      "differentialPackage": false,
-      "packElevateHelper": false,
-      "installerIcon": "icon.ico",
-      "uninstallerIcon": "icon.ico",
-      "installerHeaderIcon": "icon.ico"
+      "requestExecutionLevel": "user",
+      "unpackDirName": "kstream-portable"
     }
   }
 }

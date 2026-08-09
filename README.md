@@ -1,16 +1,24 @@
-# kstream Desktop (Core v1)
+# kstream Desktop (Core)
 
 Windows desktop shell for [kstream](https://github.com/kdesaFX/kstream).
 
-## Features (Core v1)
+## Features
 
-- Installable NSIS `.exe` (`kstream-Setup.exe`)
+- One download: `kstream-Setup.exe` (portable build)
+- Branded first-run UI — **install** to AppData or **keep portable**
 - Loads your live kstream site (default `https://kstream-one.vercel.app`; later `https://kdesa.stream`)
 - Native scraping via built-in extension bridge (no Chrome extension)
 - System tray + close-to-tray
-- Auto-updates from GitHub Releases
+- Auto-update checks from GitHub Releases (best after install)
 
-**Not in Core v1:** offline downloads, code signing (SmartScreen may warn).
+**Not in Core yet:** offline downloads, code signing (SmartScreen may warn).
+
+## First run
+
+After you open `kstream-Setup.exe`:
+
+1. **Install** (recommended) — copies the app to `%LOCALAPPDATA%\Programs\kstream` and creates Desktop + Start Menu shortcuts, then relaunches from there.
+2. **Portable** — runs from the download location and stores data in a `kstream-data` folder beside the exe.
 
 ## SmartScreen
 
@@ -19,29 +27,27 @@ Unsigned builds can trigger Windows SmartScreen. Choose **More info → Run anyw
 ## Development
 
 ```bash
-pnpm install
-pnpm start
+npm install
+npm start
 ```
 
 Optional: point at a different site:
 
 ```bash
 set KSTREAM_URL=http://localhost:5173
-pnpm start
+npm start
 ```
 
-## Build Windows installer
+In dev, the welcome screen still appears until you pick a mode (`runMode` in settings). Install skips the file copy and just continues.
+
+## Build Windows package
 
 ```bash
-pnpm run build:win
+npm run dist
 ```
 
 Output: `dist/kstream-Setup.exe`
 
 ## Releases
 
-Push a tag `v*` (or publish a GitHub Release). The workflow builds Windows x64 and uploads `kstream-Setup.exe` plus `latest.yml` for `electron-updater`.
-
-## License
-
-MIT
+Push a `v*` tag (e.g. `v1.1.0`). GitHub Actions builds and uploads the exe to Releases. The website download button uses `/download/kstream-Setup.exe` → latest release asset.

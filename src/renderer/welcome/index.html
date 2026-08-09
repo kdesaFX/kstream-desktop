@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data:; script-src 'self'"
+    />
+    <title>kstream</title>
+    <link rel="stylesheet" href="./welcome.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <main class="card" aria-labelledby="welcome-title">
+        <img id="logo" class="logo" alt="" width="72" height="72" />
+
+        <h1 id="welcome-title">welcome to kstream</h1>
+        <p class="lede">
+          this is the full <span id="version">1.0</span> release. pick how you’d like to
+          run it.
+        </p>
+
+        <div class="choices" role="group" aria-label="Install options">
+          <button type="button" class="choice choice-primary" id="btn-install" disabled>
+            <span class="choice-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M4 20h16M12 4v12m0 0l-4-4m4 4l4-4" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+            <span class="choice-body">
+              <span class="choice-title-row">
+                <span class="choice-title">install to <span id="install-path">…</span></span>
+                <span class="badge">recommended</span>
+              </span>
+              <span class="choice-desc">moves the app here and adds a shortcut to your desktop.</span>
+            </span>
+          </button>
+
+          <button type="button" class="choice" id="btn-portable" disabled>
+            <span class="choice-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M8 7h8v10H8zM12 3v4m0 10v4" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M9 12h6" stroke-linecap="round" />
+              </svg>
+            </span>
+            <span class="choice-body">
+              <span class="choice-title">keep it portable</span>
+              <span class="choice-desc">runs right from here, nothing moves.</span>
+            </span>
+          </button>
+        </div>
+
+        <p class="status" id="status" hidden></p>
+      </main>
+    </div>
+    <script src="./welcome.js"></script>
+  </body>
+</html>

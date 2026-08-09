@@ -1,0 +1,217 @@
+:root {
+  --bg: #030303;
+  --card: #0e1418;
+  --card-border: rgba(110, 236, 217, 0.12);
+  --text: #f2f7f6;
+  --muted: #8aa39e;
+  --accent: #12c4ab;
+  --accent-soft: rgba(18, 196, 171, 0.16);
+  --accent-strong: #6eecd9;
+  --choice: #121a1e;
+  --choice-hover: #172228;
+  --danger: #ff7b7b;
+  --radius: 18px;
+  --font: "Segoe UI", "DM Sans", "Lato", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+body {
+  overflow: hidden;
+}
+
+.shell {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 28px 20px;
+  background:
+    radial-gradient(ellipse 80% 55% at 50% -10%, rgba(18, 196, 171, 0.18), transparent 55%),
+    radial-gradient(ellipse 60% 40% at 100% 100%, rgba(14, 170, 148, 0.08), transparent 50%),
+    var(--bg);
+}
+
+.card {
+  width: min(440px, 100%);
+  padding: 36px 28px 28px;
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(18, 28, 32, 0.96), rgba(8, 12, 14, 0.98));
+  border: 1px solid var(--card-border);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.4),
+    0 24px 60px rgba(0, 0, 0, 0.55);
+  text-align: center;
+  animation: rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.logo {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  object-fit: cover;
+  margin: 0 auto 18px;
+  display: block;
+  box-shadow: 0 10px 28px rgba(18, 196, 171, 0.22);
+  background: #000;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.55rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-transform: lowercase;
+}
+
+.lede {
+  margin: 10px auto 0;
+  max-width: 28ch;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.45;
+  text-transform: lowercase;
+}
+
+.choices {
+  margin-top: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  width: 100%;
+  padding: 14px 14px 14px 12px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--choice);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.choice:hover:not(:disabled) {
+  background: var(--choice-hover);
+  border-color: rgba(110, 236, 217, 0.28);
+  transform: translateY(-1px);
+}
+
+.choice:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.choice:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.choice-primary {
+  border-color: rgba(18, 196, 171, 0.28);
+  background: linear-gradient(180deg, rgba(18, 196, 171, 0.1), var(--choice));
+}
+
+.choice-icon {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.choice-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.choice-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.choice-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.choice-title {
+  font-size: 0.95rem;
+  font-weight: 650;
+  line-height: 1.3;
+  text-transform: lowercase;
+  word-break: break-word;
+}
+
+.choice-desc {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  text-transform: lowercase;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+}
+
+.status {
+  margin: 18px 0 0;
+  min-height: 1.2em;
+  font-size: 0.85rem;
+  color: var(--accent-strong);
+  text-transform: lowercase;
+}
+
+.status.error {
+  color: var(--danger);
+}
+
+.status[hidden] {
+  display: none;
+}
