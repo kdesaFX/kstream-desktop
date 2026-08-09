@@ -1,6 +1,8 @@
 'use strict';
 
 const fs = require('fs');
+// Electron patches fs to treat .asar as directories — that breaks recursive copies (ENOTDIR).
+const ofs = require('original-fs');
 const path = require('path');
 const { app, shell } = require('electron');
 const { spawn, execFileSync } = require('child_process');
@@ -41,10 +43,6 @@ function getPortableMarkerPath() {
   return path.join(getPortableRoot(), 'kstream-portable.json');
 }
 
-function getInstalledMarkerPath() {
-  return path.join(getInstallDir(), '.kstream-installed');
-}
-
 function isPackaged() {
   return app.isPackaged;
 }
@@ -58,7 +56,7 @@ function isRunningFromInstallDir() {
 
 function hasPortableMarker() {
   try {
-    return fs.existsSync(getPortableMarkerPath());
+    return ofs.existsSync(getPortableMarkerPath());
   } catch {
     return false;
   }
@@ -79,7 +77,7 @@ function configurePortableUserData() {
 
   const dataDir = path.join(getPortableRoot(), 'kstream-data');
   try {
-    fs.mkdirSync(dataDir, { recursive: true });
+    ofs.mkdirSync(dataDir, { recursive: true });
   } catch (err) {
     console.warn('[kstream-desktop] could not create portable data dir', err);
   }
@@ -101,7 +99,7 @@ function writePortableMarker() {
     version: app.getVersion(),
     createdAt: new Date().toISOString(),
   };
-  fs.writeFileSync(getPortableMarkerPath(), JSON.stringify(marker, null, 2), 'utf8');
+  ofs.writeFileSync(getPortableMarkerPath(), JSON.stringify(marker, null, 2), 'utf8');
 }
 
 function createShortcuts(exePath, installDir) {
@@ -156,55 +154,71 @@ Start-Sleep -Milliseconds 400
 }
 
 function removePathWithRetry(target, attempts = 10) {
-  if (!fs.existsSync(target)) return;
+  if (!ofs.existsSync(target)) return;
   let lastErr = null;
   for (let i = 0; i < attempts; i += 1) {
     try {
-      fs.rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });
-      if (!fs.existsSync(target)) return;
+      ofs.rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });
+      if (!ofs.existsSync(target)) return;
     } catch (err) {
       lastErr = err;
     }
     sleepSync(250 + i * 100);
   }
-  if (fs.existsSync(target)) {
+  if (ofs.existsSync(target)) {
     throw lastErr || new Error(`Could not remove locked path: ${target}`);
   }
+}
+
+function copyAppTree(src, dest) {
+  // Dest must not exist so Node creates a full mirror of src.
+  if (ofs.existsSync(dest)) {
+    removePathWithRetry(dest);
+  }
+  ofs.cpSync(src, dest, {
+    recursive: true,
+    force: true,
+    filter: (from) => {
+      const base = path.basename(from).toLowerCase();
+      if (base === 'kstream-data') return false;
+      if (base === 'kstream-portable.json') return false;
+      if (base.endsWith('.log')) return false;
+      return true;
+    },
+  });
 }
 
 function copyAppToInstallDir(installDir) {
   const appRoot = path.resolve(getAppRoot());
   const dest = path.resolve(installDir);
-  const staging = `${dest}.staging`;
+  const staging = `${dest}.staging-${process.pid}`;
   const backup = `${dest}.bak`;
 
   if (appRoot.toLowerCase() === dest.toLowerCase()) {
     throw new Error('Already running from the install folder.');
   }
 
-  // Close any previous install still holding app.asar
   stopProcessesUnder(dest);
   stopProcessesUnder(backup);
-  stopProcessesUnder(staging);
 
-  removePathWithRetry(staging);
+  // Clean leftover staging dirs from failed attempts
+  try {
+    const parent = path.dirname(dest);
+    if (ofs.existsSync(parent)) {
+      for (const name of ofs.readdirSync(parent)) {
+        if (name === 'kstream.staging' || name.startsWith('kstream.staging-')) {
+          removePathWithRetry(path.join(parent, name));
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[kstream-desktop] staging cleanup', err.message);
+  }
+
   removePathWithRetry(backup);
+  copyAppTree(appRoot, staging);
 
-  fs.mkdirSync(staging, { recursive: true });
-  fs.cpSync(appRoot, staging, {
-    recursive: true,
-    filter: (src) => {
-      const base = path.basename(src).toLowerCase();
-      if (base === 'kstream-data') return false;
-      if (base === 'kstream-portable.json') return false;
-      if (base.endsWith('.log')) return false;
-      if (base.endsWith('.staging')) return false;
-      if (base.endsWith('.bak')) return false;
-      return true;
-    },
-  });
-
-  fs.writeFileSync(
+  ofs.writeFileSync(
     path.join(staging, '.kstream-installed'),
     JSON.stringify(
       {
@@ -217,23 +231,20 @@ function copyAppToInstallDir(installDir) {
     'utf8',
   );
 
-  if (fs.existsSync(dest)) {
+  if (ofs.existsSync(dest)) {
     stopProcessesUnder(dest);
     sleepSync(300);
     try {
-      fs.renameSync(dest, backup);
+      ofs.renameSync(dest, backup);
     } catch {
-      // Rename can fail if Explorer has the folder open — fall back to delete
       removePathWithRetry(dest);
     }
   }
 
   try {
-    fs.renameSync(staging, dest);
-  } catch (err) {
-    // Last resort: copy staging → dest
-    fs.mkdirSync(dest, { recursive: true });
-    fs.cpSync(staging, dest, { recursive: true });
+    ofs.renameSync(staging, dest);
+  } catch {
+    copyAppTree(staging, dest);
     removePathWithRetry(staging);
   }
 
@@ -269,11 +280,16 @@ async function installToAppData() {
         'install folder is locked by another kstream process. close other kstream windows and try again.',
       );
     }
+    if (/enotdir/i.test(msg)) {
+      throw new Error(
+        'install copy failed (file/folder conflict). close kstream, delete %LOCALAPPDATA%\\Programs\\kstream* and try again.',
+      );
+    }
     throw err;
   }
 
   const exePath = path.join(installDir, EXE_NAME);
-  if (!fs.existsSync(exePath)) {
+  if (!ofs.existsSync(exePath)) {
     throw new Error(`Installed executable missing at ${exePath}`);
   }
 
