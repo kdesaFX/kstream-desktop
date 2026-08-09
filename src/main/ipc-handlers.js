@@ -1,4 +1,4 @@
-const { shell, session } = require('electron');
+const { shell, session, net } = require('electron');
 const { app } = require('electron'); // for getting cookies from session
 
 // --- Constants & Utils ---
@@ -196,10 +196,16 @@ const handlers = {
         body: mapBodyToFetchBody(body.body, body.bodyType),
       };
 
-      // Remove User-Agent if not set, or let it be default?
-      // Some sites check UA.
-
-      const response = await fetch(url, fetchOptions);
+      // Prefer Electron session fetch so cookies / TLS match the app session.
+      // Falls back to global fetch if unavailable.
+      let response;
+      if (session.defaultSession && typeof session.defaultSession.fetch === 'function') {
+        response = await session.defaultSession.fetch(url, fetchOptions);
+      } else if (typeof net.fetch === 'function') {
+        response = await net.fetch(url, fetchOptions);
+      } else {
+        response = await fetch(url, fetchOptions);
+      }
 
       const contentType = response.headers.get('content-type');
       const responseBody =
