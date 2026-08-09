@@ -29,7 +29,8 @@ jobs:
         run: npm install
 
       - name: Build Windows x64
-        run: npm run build:win
+        # Never publish from electron-builder (it creates draft releases when GH_TOKEN is set).
+        run: npm run dist
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -72,7 +73,10 @@ jobs:
           echo "Uploading assets to $TAG"
           # Ensure release exists (tag push may not create one yet)
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --title "kstream $TAG" --notes "kstream desktop Core release $TAG"
+            gh release create "$TAG" --title "kstream $TAG" --notes "kstream desktop Core release $TAG" --latest
+          else
+            # Publish if electron-builder (or a previous run) left a draft
+            gh release edit "$TAG" --draft=false --latest || true
           fi
           for f in dist/*; do
             if [ -f "$f" ]; then
@@ -80,3 +84,4 @@ jobs:
               gh release upload "$TAG" "$f" --clobber
             fi
           done
+          gh release edit "$TAG" --draft=false --latest || true
