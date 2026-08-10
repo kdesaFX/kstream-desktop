@@ -24,6 +24,10 @@ const {
   getSetupInfo,
   getInstallDir,
 } = require('./install');
+const {
+  updateDiscordPresence,
+  shutdownDiscordPresence,
+} = require('./discord-rpc');
 
 // Must run before userData / store is touched.
 configurePortableUserData();
@@ -313,7 +317,9 @@ function registerIpc() {
     ipcMain.handle(channel, (_event, body) => handler(body));
   });
 
-  ipcMain.handle('updateMediaMetadata', async () => ({ success: true }));
+  ipcMain.handle('updateMediaMetadata', async (_event, body) =>
+    updateDiscordPresence(body || null),
+  );
   ipcMain.handle('openOfflineApp', async () => ({ success: true }));
 
   ipcMain.on('open-settings', () => {
@@ -414,6 +420,7 @@ if (!gotLock) {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  shutdownDiscordPresence();
   if (mainWindow && !mainWindow.isDestroyed() && !showingSetup) {
     const { width, height, x, y } = mainWindow.getBounds();
     store.set('windowBounds', { width, height, x, y });
