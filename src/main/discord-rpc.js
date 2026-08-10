@@ -13,6 +13,11 @@ const net = require('net');
 
 const DISCORD_CLIENT_ID = '1536251834203770941';
 const WATCH_URL = 'https://kdesa.stream';
+/** Small badge on the poster (Crunchyroll-style). External URL — no portal upload needed. */
+const LOGO_IMAGE_URL =
+  process.env.KSTREAM_DISCORD_LOGO_URL ||
+  'https://kstream-one.vercel.app/apple-touch-icon.png';
+/** Optional portal asset key; only used if set (external URL preferred). */
 const LOGO_ASSET = (process.env.KSTREAM_DISCORD_ASSET || '').trim();
 
 let ipcPipeSkip = 0;
@@ -275,19 +280,20 @@ function buildActivityPayload(body) {
 
   if (!isPaused && typeof body.startTimestamp === 'number') {
     activity.timestamps = { start: Math.round(body.startTimestamp) };
+  } else if (!isPaused) {
+    // Always show an elapsed timer while actively watching
+    activity.timestamps = { start: Date.now() };
   }
 
-  // Poster is optional — if Discord rejects it we fall back to text-only
+  // Poster large + kstream logo small (Crunchyroll layout)
   const poster = normalizePosterUrl(body.poster);
   if (poster) {
     activity.assets = {
       large_image: poster,
       large_text: (episodeTitle || title).slice(0, 128),
+      small_image: LOGO_ASSET || LOGO_IMAGE_URL,
+      small_text: 'kstream',
     };
-    if (LOGO_ASSET) {
-      activity.assets.small_image = LOGO_ASSET;
-      activity.assets.small_text = 'kstream';
-    }
   }
 
   return activity;
