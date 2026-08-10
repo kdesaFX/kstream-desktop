@@ -72,6 +72,13 @@ let logPath = null;
 let watchdogTimer = null;
 let reconnectTimer = null;
 let refreshTimer = null;
+/** One session clock for Discord's elapsed timer (browsing → watching). */
+let sessionStartedAt = null;
+
+function ensureSessionStart() {
+  if (!sessionStartedAt) sessionStartedAt = Date.now();
+  return sessionStartedAt;
+}
 
 function setLogPath(userDataPath) {
   try {
@@ -269,6 +276,7 @@ function buildIdleActivity() {
     details: 'Browsing',
     state: 'Looking for something to watch',
     instance: false,
+    timestamps: { start: ensureSessionStart() },
     buttons: [{ label: 'Watch now on kstream', url: WATCH_URL }],
   };
 }
@@ -312,7 +320,8 @@ function buildActivityPayload(body) {
 
   const title = (body.title || 'Something').trim();
   const episodeLabel = formatEpisodeLabel(body);
-  // Shows → S3EP9; movies → July 2026. No timeline / Discord timestamps.
+  // Shows → S3EP9; movies → July 2026. Keep one session start so the
+  // Discord elapsed timer does not reset when leaving idle browsing.
   const state = episodeLabel || formatReleaseLabel(body) || ' ';
 
   const activity = {
@@ -320,6 +329,7 @@ function buildActivityPayload(body) {
     details: title.slice(0, 128),
     state: String(state).slice(0, 128),
     instance: false,
+    timestamps: { start: ensureSessionStart() },
     buttons: [{ label: 'Watch now on kstream', url: WATCH_URL }],
   };
 
@@ -347,9 +357,12 @@ function activityKey(activity, isPaused) {
 
 async function setActivitySafe(client, activity) {
   const pid = process.pid;
-  // Strip timestamps completely — do not send null (Discord hid the card)
-  const base = { ...activity };
-  delete base.timestamps;
+  // Always send a real start time (never null — that hid the card). Reuse
+  // one session clock so browsing → watching does not reset Discord's timer.
+  const base = {
+    ...activity,
+    timestamps: { start: ensureSessionStart() },
+  };
 
   const attempts = [
     base,
@@ -486,6 +499,7 @@ function startWatchdog() {
 
 function startDiscordPresence(userDataPath) {
   if (userDataPath) setLogPath(userDataPath);
+  ensureSessionStart();
   startWatchdog();
   setTimeout(() => {
     updateDiscordPresence({ idle: true }).catch(() => {});
@@ -504,6 +518,7 @@ function shutdownDiscordPresence() {
   }
   pendingBody = null;
   lastPayloadKey = '';
+  sessionStartedAt = null;
   if (ready && rpc) {
     try {
       rpc.request('SET_ACTIVITY', { pid: process.pid }).catch(() => {});
