@@ -293,58 +293,47 @@ function formatReleaseLabel(body) {
   return '';
 }
 
-function formatClock(totalSec) {
-  const sec = Math.max(0, Math.floor(Number(totalSec) || 0));
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = sec % 60;
-  if (h > 0) {
-    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+function formatEpisodeLabel(body) {
+  const season = Number(body.seasonNumber);
+  const episode = Number(body.episodeNumber);
+  if (
+    !Number.isFinite(season) ||
+    !Number.isFinite(episode) ||
+    season <= 0 ||
+    episode <= 0
+  ) {
+    return '';
   }
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
-
-function formatTimeRange(currentSec, durationSec) {
-  if (!(durationSec > 0)) return '';
-  return `${formatClock(currentSec)}-${formatClock(durationSec)}`;
+  return `S${Math.floor(season)}EP${Math.floor(episode)}`;
 }
 
 function buildActivityPayload(body) {
   if (body?.idle) return buildIdleActivity();
 
   const title = (body.title || 'Something').trim();
-  const releaseLabel = formatReleaseLabel(body);
-
-  let currentSec =
-    typeof body.currentTimeSec === 'number' && body.currentTimeSec >= 0
-      ? body.currentTimeSec
-      : null;
-  const durationSec =
-    typeof body.durationSec === 'number' && body.durationSec > 0
-      ? body.durationSec
-      : 0;
-
-  if (currentSec == null) currentSec = 0;
-  const timeRange = formatTimeRange(currentSec, durationSec);
-
-  // Watching kstream — keep the payload boring so Discord always shows it.
-  // Discord only gives two white text lines on Watching (details + state), and
-  // strips newlines, so date + clock share state with a clear separator.
-  // Never send timestamps (omitted entirely) — that green TV timer is Discord's
-  // timestamp widget, and timestamps:null was wiping the whole card.
-  let state = releaseLabel || '';
-  if (timeRange) {
-    state = state ? `${state} · ${timeRange}` : timeRange;
-  }
-  if (!state) state = ' ';
+  const episodeLabel = formatEpisodeLabel(body);
+  // Shows → S3EP9; movies → July 2026. No timeline / Discord timestamps.
+  const state = episodeLabel || formatReleaseLabel(body) || ' ';
 
   const activity = {
     type: 3,
     details: title.slice(0, 128),
-    state: state.slice(0, 128),
+    state: String(state).slice(0, 128),
     instance: false,
     buttons: [{ label: 'Watch now on kstream', url: WATCH_URL }],
   };
+
+  const poster = normalizePosterUrl(body.poster);
+  if (poster) {
+    activity.assets = {
+      large_image: poster,
+      small_image: LOGO_ASSET || LOGO_IMAGE_URL,
+      small_text: 'kstream',
+    };
+  }
+
+  return activity;
+}
 
   const poster = normalizePosterUrl(body.poster);
   if (poster) {

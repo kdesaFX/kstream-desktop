@@ -338,7 +338,6 @@ function registerSetupIpc() {
 let lastMediaBody = null;
 /** @type {Map<string, { releaseDate?: string, releaseYear?: number }>} */
 const releaseDateCache = new Map();
-let clockTimer = null;
 
 function registerIpc() {
   Object.entries(handlers).forEach(([channel, handler]) => {
@@ -348,14 +347,13 @@ function registerIpc() {
   ipcMain.handle('updateMediaMetadata', async (_event, body) => {
     const enriched = await enrichPresenceFromVideo(body || null);
     lastMediaBody = enriched;
-    ensureClockTimer();
     console.log(
       '[kstream-desktop] updateMediaMetadata',
       enriched && enriched.clear
         ? 'clear'
         : enriched?.idle
           ? 'idle'
-          : `${enriched?.title || '(empty)'} dur=${enriched?.durationSec || 0}s paused=${Boolean(enriched?.isPaused)} date=${enriched?.releaseDate || enriched?.releaseYear || '-'} clock=${formatClockPreview(enriched)}`,
+          : `${enriched?.title || '(empty)'} S${enriched?.seasonNumber || '-'}E${enriched?.episodeNumber || '-'} date=${enriched?.releaseDate || enriched?.releaseYear || '-'}`,
     );
     return updateDiscordPresence(enriched);
   });
@@ -374,32 +372,6 @@ function registerIpc() {
         'Unsigned builds may show a Windows SmartScreen warning — choose More info → Run anyway.',
     });
   });
-}
-
-function formatClockPreview(body) {
-  if (!body || !(body.durationSec > 0)) return '-';
-  const cur =
-    typeof body.currentTimeSec === 'number' ? body.currentTimeSec : 0;
-  const a = Math.floor(cur);
-  const b = Math.floor(body.durationSec);
-  return `${a}s-${b}s`;
-}
-
-/** Keep the plain-text "0:05-20:01" clock fresh while playing. */
-function ensureClockTimer() {
-  if (clockTimer) return;
-  clockTimer = setInterval(async () => {
-    const body = lastMediaBody;
-    if (!body || body.idle || body.clear || !body.title) return;
-    if (body.isPaused) return; // frozen text — no need to spam
-    try {
-      const enriched = await enrichPresenceFromVideo(body);
-      lastMediaBody = enriched;
-      await updateDiscordPresence(enriched);
-    } catch {
-      // ignore
-    }
-  }, 5000);
 }
 
 /**
@@ -437,6 +409,20 @@ async function enrichPresenceFromVideo(body) {
             meta && typeof meta.releaseDate === 'string' && meta.releaseDate
               ? meta.releaseDate
               : null,
+          seasonNumber:
+            window.meta &&
+            window.meta.player &&
+            window.meta.player.season &&
+            window.meta.player.season.number
+              ? window.meta.player.season.number
+              : null,
+          episodeNumber:
+            window.meta &&
+            window.meta.player &&
+            window.meta.player.episode &&
+            window.meta.player.episode.number
+              ? window.meta.player.episode.number
+              : null,
         };
       })()`,
       true,
@@ -449,10 +435,15 @@ async function enrichPresenceFromVideo(body) {
     }
     if (info.releaseDate) next.releaseDate = info.releaseDate;
     if (info.releaseYear) next.releaseYear = info.releaseYear;
+    if (info.seasonNumber) next.seasonNumber = info.seasonNumber;
+    if (info.episodeNumber) next.episodeNumber = info.episodeNumber;
 
-    // Fill month+year from TMDB when the web build only has a year
+    // Fill month+year from TMDB for movies when the web build only has a year
+    const isShow =
+      Number(next.seasonNumber) > 0 && Number(next.episodeNumber) > 0;
     const needsMonth =
-      !next.releaseDate || !/^\d{4}-\d{2}/.test(String(next.releaseDate));
+      !isShow &&
+      (!next.releaseDate || !/^\d{4}-\d{2}/.test(String(next.releaseDate)));
     if (needsMonth && info.tmdbId) {
       const cached = releaseDateCache.get(info.tmdbId);
       if (cached?.releaseDate) {
@@ -471,15 +462,6 @@ async function enrichPresenceFromVideo(body) {
       }
     }
 
-    if (info.durationSec > 0 || info.hasVideo) {
-      next.currentTimeSec = info.currentTime;
-      if (info.durationSec > 0) next.durationSec = info.durationSec;
-      // Never use Discord's built-in timestamp widget — we render "0:05-20:01"
-      // as plain text under the date instead.
-      delete next.startTimestamp;
-      delete next.endTimestamp;
-      next.clearTimestamps = true;
-    }
     return next;
   } catch (err) {
     console.warn(
