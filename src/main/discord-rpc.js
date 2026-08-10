@@ -245,29 +245,38 @@ function buildIdleActivity() {
   };
 }
 
+function formatReleaseLabel(body) {
+  const raw =
+    typeof body.releaseDate === 'string' ? body.releaseDate.trim() : '';
+  if (raw) {
+    const [yearStr, monthStr] = raw.slice(0, 10).split('-');
+    const year = Number(yearStr);
+    const month = Number(monthStr);
+    if (year && month >= 1 && month <= 12) {
+      return new Date(year, month - 1, 1).toLocaleDateString('en-US', {
+        month: 'long',
+        year: 'numeric',
+      });
+    }
+    if (year) return String(year);
+  }
+  const year = Number(body.releaseYear);
+  if (Number.isFinite(year) && year > 0) return String(year);
+  return '';
+}
+
 function buildActivityPayload(body) {
   if (body?.idle) return buildIdleActivity();
 
   const title = (body.title || 'Something').trim();
-  const episodeTitle = (body.episodeTitle || '').trim();
-  const seasonNumber = Number(body.seasonNumber);
-  const episodeNumber = Number(body.episodeNumber);
-  const isShow =
-    Number.isFinite(seasonNumber) &&
-    Number.isFinite(episodeNumber) &&
-    seasonNumber > 0 &&
-    episodeNumber > 0;
   const isPaused = Boolean(body.isPaused);
-
-  let state;
-  if (isShow) {
-    const seasonLine = `Season ${seasonNumber}, Episode ${episodeNumber}`;
-    state = episodeTitle
-      ? `${episodeTitle.slice(0, 80)} — ${seasonLine}`.slice(0, 128)
-      : seasonLine;
-  } else {
-    state = 'Watching';
-  }
+  const releaseLabel = formatReleaseLabel(body);
+  // Listening card layout:
+  // 1) details = title
+  // 2) state = month + year
+  // 3) no large_text (Discord shows it as a duplicate third line)
+  // 4) timestamps = progress bar
+  const state = releaseLabel || 'Watching';
 
   // Resolve playback window (needed playing AND paused — paused freezes the bar)
   let start =
@@ -309,12 +318,12 @@ function buildActivityPayload(body) {
     activity.timestamps = { start: Date.now() };
   }
 
-  // Poster large + kstream logo small (Crunchyroll layout)
+  // Poster + kstream logo. Omit large_text — Listening UI prints it as a
+  // third line and was duplicating the title under the date.
   const poster = normalizePosterUrl(body.poster);
   if (poster) {
     activity.assets = {
       large_image: poster,
-      large_text: (episodeTitle || title).slice(0, 128),
       small_image: LOGO_ASSET || LOGO_IMAGE_URL,
       small_text: 'kstream',
     };
