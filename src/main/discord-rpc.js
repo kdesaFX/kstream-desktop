@@ -335,18 +335,6 @@ function buildActivityPayload(body) {
   return activity;
 }
 
-  const poster = normalizePosterUrl(body.poster);
-  if (poster) {
-    activity.assets = {
-      large_image: poster,
-      small_image: LOGO_ASSET || LOGO_IMAGE_URL,
-      small_text: 'kstream',
-    };
-  }
-
-  return activity;
-}
-
 function activityKey(activity, isPaused) {
   return JSON.stringify({
     d: activity.details,
