@@ -2,7 +2,7 @@
   "name": "kstream-desktop",
   "productName": "kstream",
   "version": "1.2.27",
-  "description": "kstream — stream movies & shows on Windows",
+  "description": "kstream: stream movies and shows on Windows",
   "author": "kstream",
   "license": "MIT",
   "main": "src/main/main.js",

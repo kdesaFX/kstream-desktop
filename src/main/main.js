@@ -376,7 +376,7 @@ function registerIpc() {
         `URL: ${getStreamUrl()}\n` +
         `Mode: ${store.get('runMode', 'unknown')}\n` +
         `Install folder: ${getInstallDir()}\n\n` +
-        'Unsigned builds may show a Windows SmartScreen warning — choose More info → Run anyway.',
+        'Unsigned builds may show a Windows SmartScreen warning. Choose More info, then Run anyway.',
     });
   });
 }

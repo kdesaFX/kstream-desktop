@@ -24,7 +24,7 @@
 
   async function init() {
     if (!window.kstreamSetup) {
-      setStatus('setup bridge missing — restart the app.', true);
+      setStatus('setup bridge missing. Restart the app.', true);
       return;
     }
 
@@ -45,7 +45,7 @@
     try {
       const result = await window.kstreamSetup.install();
       if (result?.dev) {
-        setStatus('dev mode — continuing without copying files.');
+        setStatus('dev mode. Continuing without copying files.');
         return;
       }
       setStatus('launching installed app…');
