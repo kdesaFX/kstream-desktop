@@ -170,7 +170,7 @@ async function loginOnce() {
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error('Discord RPC connect timeout'));
-    }, 5000);
+    }, 12000);
 
     client.once('ready', () => {
       clearTimeout(timer);
@@ -189,6 +189,9 @@ async function loginOnce() {
 /**
  * Prefer real Discord. Fall back to Vesktop arRPC if that's the only pipe
  * answering — better than no presence at all.
+ *
+ * IMPORTANT: never hold two IPC sessions with the same Client ID at once
+ * (that makes Discord drop the activity). Destroy arRPC before probing others.
  */
 async function ensureClient() {
   if (ready && rpc) return rpc;
@@ -198,9 +201,12 @@ async function ensureClient() {
     try {
       if (rpc) destroyClient('reconnect');
 
-      let arrpcFallback = null;
+      let sawArrpc = false;
 
-      for (let skip = 0; skip < 5; skip += 1) {
+      // Try non-zero pipes first (official Discord), then ipc-0 (often Vesktop)
+      const order = [1, 2, 3, 4, 0];
+
+      for (const skip of order) {
         ipcPipeSkip = skip;
         try {
           const client = await loginOnce();
@@ -214,25 +220,14 @@ async function ensureClient() {
           );
 
           if (who.toLowerCase() === 'arrpc') {
-            log('arRPC found — keeping as fallback, probing for Discord…');
-            if (arrpcFallback) {
-              try {
-                arrpcFallback.destroy();
-              } catch {
-                // ignore
-              }
-            }
-            arrpcFallback = client;
-            continue;
-          }
-
-          if (arrpcFallback) {
+            sawArrpc = true;
+            log('skipping arRPC (will fall back if Discord missing)');
             try {
-              arrpcFallback.destroy();
+              client.destroy();
             } catch {
               // ignore
             }
-            arrpcFallback = null;
+            continue;
           }
 
           rpc = client;
@@ -244,12 +239,18 @@ async function ensureClient() {
         }
       }
 
-      if (arrpcFallback) {
-        log('using arRPC fallback (official Discord IPC unavailable)');
-        rpc = arrpcFallback;
-        ready = true;
-        clearReconnectTimer();
-        return rpc;
+      if (sawArrpc) {
+        ipcPipeSkip = 0;
+        try {
+          const client = await loginOnce();
+          log('using arRPC fallback (official Discord IPC unavailable)');
+          rpc = client;
+          ready = true;
+          clearReconnectTimer();
+          return rpc;
+        } catch (err) {
+          log('arRPC fallback failed:', err?.message || err);
+        }
       }
 
       log('unavailable: no Discord IPC pipe found');
