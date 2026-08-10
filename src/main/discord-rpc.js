@@ -10,6 +10,21 @@ const path = require('path');
 
 const DISCORD_CLIENT_ID = '1536251834203770941';
 const LOGO_ASSET = process.env.KSTREAM_DISCORD_ASSET || '';
+const WATCH_URL = 'https://kdesa.stream';
+
+const PRESENCE_BUTTONS = [
+  {
+    label: 'Watch on kstream',
+    url: WATCH_URL,
+  },
+];
+
+function withButtons(activity) {
+  return {
+    ...activity,
+    buttons: PRESENCE_BUTTONS,
+  };
+}
 
 let rpc = null;
 let ready = false;
@@ -123,12 +138,12 @@ async function ensureClient() {
 }
 
 function buildIdleActivity() {
-  return {
+  return withButtons({
     type: 3,
     details: 'Browsing',
     state: 'Looking for something to watch',
     instance: false,
-  };
+  });
 }
 
 function buildActivityPayload(body) {
@@ -174,7 +189,7 @@ function buildActivityPayload(body) {
     };
   }
 
-  return activity;
+  return withButtons(activity);
 }
 
 function activityKey(activity, isPaused) {
@@ -196,12 +211,27 @@ async function applyActivity(activity) {
   if (!client) return false;
 
   const pid = process.pid;
-  const result = await client.request('SET_ACTIVITY', {
-    pid,
-    activity,
-  });
-  log('SET_ACTIVITY ok pid=', String(pid), 'type=', String(activity.type));
-  return result !== undefined || true;
+  try {
+    await client.request('SET_ACTIVITY', {
+      pid,
+      activity,
+    });
+    log('SET_ACTIVITY ok pid=', String(pid), 'type=', String(activity.type));
+    return true;
+  } catch (err) {
+    // Buttons can be rejected for some clients — retry without them
+    if (activity.buttons) {
+      const { buttons, ...bare } = activity;
+      log(
+        'SET_ACTIVITY with buttons failed, retrying bare:',
+        err?.message || err,
+      );
+      await client.request('SET_ACTIVITY', { pid, activity: bare });
+      log('SET_ACTIVITY ok (no buttons)');
+      return true;
+    }
+    throw err;
+  }
 }
 
 /**
