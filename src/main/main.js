@@ -33,6 +33,17 @@ const {
 // Must run before userData / store is touched.
 configurePortableUserData();
 
+// Discord RPC / native pipes can emit errors that would otherwise kill Electron.
+process.on('uncaughtException', (err) => {
+  console.error('[kstream-desktop] uncaughtException (kept alive):', err?.message || err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error(
+    '[kstream-desktop] unhandledRejection (kept alive):',
+    reason?.message || reason,
+  );
+});
+
 // Look like Chrome, not Electron — many CDNs/WAFs block Electron UAs.
 app.userAgentFallback = CHROME_UA;
 
@@ -349,16 +360,36 @@ function setupAutoUpdater() {
     return;
   }
 
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  // Never auto-install without asking — avoids surprise relaunches.
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
 
   autoUpdater.on('update-available', (info) => {
     console.log('[kstream-desktop] update available', info.version);
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    dialog
+      .showMessageBox(mainWindow, {
+        type: 'info',
+        title: 'Update available',
+        message: `kstream ${info.version} is available.`,
+        detail: 'Download and install now?',
+        buttons: ['Download', 'Later'],
+        defaultId: 0,
+        cancelId: 1,
+      })
+      .then(({ response }) => {
+        if (response === 0) {
+          autoUpdater.downloadUpdate().catch((err) => {
+            console.warn('[kstream-desktop] update download failed', err);
+          });
+        }
+      })
+      .catch(() => {});
   });
 
   autoUpdater.on('update-downloaded', (info) => {
     console.log('[kstream-desktop] update downloaded', info.version);
-    if (!mainWindow) return;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
     dialog
       .showMessageBox(mainWindow, {
         type: 'info',
@@ -374,18 +405,19 @@ function setupAutoUpdater() {
           isQuitting = true;
           autoUpdater.quitAndInstall();
         }
-      });
+      })
+      .catch(() => {});
   });
 
   autoUpdater.on('error', (err) => {
-    console.warn('[kstream-desktop] updater error', err);
+    console.warn('[kstream-desktop] updater error', err?.message || err);
   });
 
   setTimeout(() => {
     autoUpdater.checkForUpdates().catch((err) => {
-      console.warn('[kstream-desktop] update check failed', err);
+      console.warn('[kstream-desktop] update check failed', err?.message || err);
     });
-  }, 5000);
+  }, 15000);
 }
 
 const gotLock = app.requestSingleInstanceLock();
