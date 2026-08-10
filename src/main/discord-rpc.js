@@ -10,6 +10,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const net = require('net');
 
 const DISCORD_CLIENT_ID = '1536251834203770941';
 /** Upload Rich Presence art named "kstream" in the Discord developer portal. */
@@ -22,6 +23,40 @@ const PRESENCE_BUTTONS = [
     url: WATCH_URL,
   },
 ];
+
+/**
+ * Vesktop's arRPC usually binds discord-ipc-0 and steals Rich Presence from
+ * the real Discord client. Skip that many pipes when reconnecting.
+ */
+let ipcPipeSkip = 0;
+const realCreateConnection = net.createConnection.bind(net);
+net.createConnection = function patchedCreateConnection(target, ...rest) {
+  if (
+    typeof target === 'string' &&
+    target.includes('discord-ipc-') &&
+    ipcPipeSkip > 0
+  ) {
+    target = target.replace(/discord-ipc-(\d+)/, (_, id) => {
+      const next = Number(id) + ipcPipeSkip;
+      return `discord-ipc-${next}`;
+    });
+  } else if (
+    target &&
+    typeof target === 'object' &&
+    typeof target.path === 'string' &&
+    target.path.includes('discord-ipc-') &&
+    ipcPipeSkip > 0
+  ) {
+    target = {
+      ...target,
+      path: target.path.replace(/discord-ipc-(\d+)/, (_, id) => {
+        const next = Number(id) + ipcPipeSkip;
+        return `discord-ipc-${next}`;
+      }),
+    };
+  }
+  return realCreateConnection(target, ...rest);
+};
 
 function withButtons(activity) {
   return {
@@ -133,52 +168,77 @@ function attachClientGuards(client) {
   });
 }
 
+async function loginOnce() {
+  // eslint-disable-next-line global-require, import/no-extraneous-dependencies
+  const DiscordRPC = require('discord-rpc');
+  if (!registered) {
+    try {
+      DiscordRPC.register(DISCORD_CLIENT_ID);
+      registered = true;
+    } catch (regErr) {
+      log('register skipped:', regErr?.message || regErr);
+    }
+  }
+
+  if (rpc) destroyClient('reconnect');
+  rpc = new DiscordRPC.Client({ transport: 'ipc' });
+  attachClientGuards(rpc);
+
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('Discord RPC connect timeout'));
+    }, 6000);
+
+    rpc.once('ready', () => {
+      clearTimeout(timer);
+      ready = true;
+      clearReconnectTimer();
+      resolve();
+    });
+
+    rpc.login({ clientId: DISCORD_CLIENT_ID }).catch((err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+
+  return rpc;
+}
+
 async function ensureClient() {
   if (ready && rpc) return rpc;
   if (connectPromise) return connectPromise;
 
   connectPromise = (async () => {
     try {
-      // eslint-disable-next-line global-require, import/no-extraneous-dependencies
-      const DiscordRPC = require('discord-rpc');
-      if (!registered) {
+      // Try up to 5 IPC pipes so we can skip Vesktop arRPC on ipc-0
+      for (let skip = 0; skip < 5; skip += 1) {
+        ipcPipeSkip = skip;
         try {
-          DiscordRPC.register(DISCORD_CLIENT_ID);
-          registered = true;
-        } catch (regErr) {
-          log('register skipped:', regErr?.message || regErr);
+          const client = await loginOnce();
+          const who = (
+            client?.user?.username ||
+            client?.user?.global_name ||
+            client?.user?.id ||
+            'unknown'
+          ).toString();
+          log('connected as', who, `(ipc skip=${skip})`);
+
+          if (who.toLowerCase() === 'arrpc') {
+            log('skipping Vesktop arRPC — trying next Discord IPC pipe');
+            destroyClient('skip-arrpc');
+            continue;
+          }
+
+          ipcPipeSkip = skip; // keep using this pipe for reconnects
+          return client;
+        } catch (err) {
+          destroyClient('connect-failed');
+          log(`ipc skip=${skip} failed:`, err?.message || err);
         }
       }
 
-      if (rpc) destroyClient('reconnect');
-      rpc = new DiscordRPC.Client({ transport: 'ipc' });
-      attachClientGuards(rpc);
-
-      await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          reject(new Error('Discord RPC connect timeout'));
-        }, 6000);
-
-        rpc.once('ready', () => {
-          clearTimeout(timer);
-          ready = true;
-          clearReconnectTimer();
-          const who = rpc?.user?.username || rpc?.user?.id || 'unknown';
-          log('connected as', who);
-          resolve();
-        });
-
-        rpc.login({ clientId: DISCORD_CLIENT_ID }).catch((err) => {
-          clearTimeout(timer);
-          reject(err);
-        });
-      });
-
-      return rpc;
-    } catch (err) {
-      ready = false;
-      destroyClient('connect-failed');
-      log('unavailable:', err?.message || err);
+      log('unavailable: no Discord IPC pipe found');
       return null;
     } finally {
       connectPromise = null;
@@ -226,8 +286,9 @@ function buildActivityPayload(body) {
   if (isShow) {
     const seasonLine = `Season ${seasonNumber}, Episode ${episodeNumber}`;
     if (episodeTitle) {
-      // Newline → two lines under the title when Discord renders it
-      state = `${episodeTitle.slice(0, 100)}\n${seasonLine}`.slice(0, 128);
+      // Keep both lines visible without relying on \n (some clients strip it)
+      const ep = episodeTitle.slice(0, 80);
+      state = `${ep} — ${seasonLine}`.slice(0, 128);
     } else {
       state = seasonLine;
     }
@@ -343,18 +404,11 @@ async function flushPending(force = false) {
  */
 async function updateDiscordPresence(body) {
   try {
+    // Old web builds still send { clear: true } and wipe status. While the
+    // desktop app is open, treat clear as idle browsing instead.
     if (body && body.clear && !body.idle) {
-      pendingBody = { idle: true };
-      lastPayloadKey = '';
-      if (ready && rpc) {
-        try {
-          await rpc.request('SET_ACTIVITY', { pid: process.pid });
-          log('presence cleared');
-        } catch (err) {
-          log('clear failed:', err?.message || err);
-        }
-      }
-      return { success: true };
+      log('ignoring clear from web — switching to idle browsing');
+      body = { idle: true };
     }
 
     if (!body || body.idle) {
