@@ -5,7 +5,7 @@
  *
  * Keep this simple: one IPC connection (never probe multiple pipes with the
  * same app id — Discord drops the first session). Prefer real Discord over
- * Vesktop arRPC. Text + optional poster URL; no uploaded asset keys required.
+ * Vesktop arRPC, but fall back to arRPC if it's all we have.
  */
 const fs = require('fs');
 const path = require('path');
@@ -187,8 +187,8 @@ async function loginOnce() {
 }
 
 /**
- * Connect to ONE pipe only. Probing multiple pipes with the same application
- * id makes Discord drop the first session — that was killing visible presence.
+ * Prefer real Discord. Fall back to Vesktop arRPC if that's the only pipe
+ * answering — better than no presence at all.
  */
 async function ensureClient() {
   if (ready && rpc) return rpc;
@@ -198,22 +198,41 @@ async function ensureClient() {
     try {
       if (rpc) destroyClient('reconnect');
 
+      let arrpcFallback = null;
+
       for (let skip = 0; skip < 5; skip += 1) {
         ipcPipeSkip = skip;
         try {
           const client = await loginOnce();
           const who = (client.user?.username || '').toString();
           const globalName = (client.user?.global_name || '').toString();
-          log('connected as', who || '?', globalName ? `(${globalName})` : '', `ipc=${skip}`);
+          log(
+            'connected as',
+            who || '?',
+            globalName ? `(${globalName})` : '',
+            `ipc=${skip}`,
+          );
 
           if (who.toLowerCase() === 'arrpc') {
-            log('skipping arRPC, trying next pipe');
+            log('arRPC found — keeping as fallback, probing for Discord…');
+            if (arrpcFallback) {
+              try {
+                arrpcFallback.destroy();
+              } catch {
+                // ignore
+              }
+            }
+            arrpcFallback = client;
+            continue;
+          }
+
+          if (arrpcFallback) {
             try {
-              client.destroy();
+              arrpcFallback.destroy();
             } catch {
               // ignore
             }
-            continue;
+            arrpcFallback = null;
           }
 
           rpc = client;
@@ -223,6 +242,14 @@ async function ensureClient() {
         } catch (err) {
           log(`ipc=${skip} failed:`, err?.message || err);
         }
+      }
+
+      if (arrpcFallback) {
+        log('using arRPC fallback (official Discord IPC unavailable)');
+        rpc = arrpcFallback;
+        ready = true;
+        clearReconnectTimer();
+        return rpc;
       }
 
       log('unavailable: no Discord IPC pipe found');
@@ -282,12 +309,7 @@ function formatTimeRange(currentSec, durationSec) {
 }
 
 function buildActivityPayload(body) {
-  if (body?.idle) {
-    const idle = buildIdleActivity();
-    // Must null timestamps or Discord keeps a previous green timer around
-    idle.timestamps = null;
-    return idle;
-  }
+  if (body?.idle) return buildIdleActivity();
 
   const title = (body.title || 'Something').trim();
   const releaseLabel = formatReleaseLabel(body);
@@ -301,40 +323,32 @@ function buildActivityPayload(body) {
       ? body.durationSec
       : 0;
 
-  if (
-    currentSec == null &&
-    typeof body.startTimestamp === 'number' &&
-    !body.isPaused &&
-    !body.clearTimestamps
-  ) {
-    currentSec = Math.max(0, (Date.now() - body.startTimestamp) / 1000);
-  }
   if (currentSec == null) currentSec = 0;
-
   const timeRange = formatTimeRange(currentSec, durationSec);
 
-  // Watching kstream — Discord strips "\n", so use a line-separator in details
-  // for title/date, and put the clock alone in state (its own white text line).
-  // timestamps:null clears the green TV timer left over from earlier updates.
-  let details = title;
-  if (releaseLabel) {
-    details = `${title}\u2028${releaseLabel}`;
+  // Watching kstream — keep the payload boring so Discord always shows it.
+  // Discord only gives two white text lines on Watching (details + state), and
+  // strips newlines, so date + clock share state with a clear separator.
+  // Never send timestamps (omitted entirely) — that green TV timer is Discord's
+  // timestamp widget, and timestamps:null was wiping the whole card.
+  let state = releaseLabel || '';
+  if (timeRange) {
+    state = state ? `${state} · ${timeRange}` : timeRange;
   }
+  if (!state) state = ' ';
 
   const activity = {
     type: 3,
-    details: details.slice(0, 128),
-    state: (timeRange || ' ').slice(0, 128),
+    details: title.slice(0, 128),
+    state: state.slice(0, 128),
     instance: false,
     buttons: [{ label: 'Watch now on kstream', url: WATCH_URL }],
-    timestamps: null,
   };
 
   const poster = normalizePosterUrl(body.poster);
   if (poster) {
     activity.assets = {
       large_image: poster,
-      // Don't set large_text — on Watching it's hover-only and was confusing
       small_image: LOGO_ASSET || LOGO_IMAGE_URL,
       small_text: 'kstream',
     };
@@ -350,55 +364,30 @@ function activityKey(activity, isPaused) {
     y: activity.type || 0,
     p: Boolean(isPaused),
     i: activity.assets?.large_image || '',
-    ts: activity.timestamps == null ? 0 : 1,
   });
 }
 
 async function setActivitySafe(client, activity) {
   const pid = process.pid;
-  // Always include timestamps:null so Discord drops a leftover green timer
-  const base = {
-    ...activity,
-    timestamps:
-      activity.timestamps === undefined ? null : activity.timestamps,
-  };
-
-  // Hard-clear any previous timer before applying (Discord often keeps stale ones)
-  if (base.timestamps == null) {
-    try {
-      await client.request('SET_ACTIVITY', {
-        pid,
-        activity: {
-          type: 3,
-          details: base.details,
-          state: base.state,
-          assets: base.assets,
-          buttons: base.buttons,
-          instance: false,
-          timestamps: null,
-        },
-      });
-    } catch {
-      // continue to normal attempts
-    }
-  }
+  // Strip timestamps completely — do not send null (Discord hid the card)
+  const base = { ...activity };
+  delete base.timestamps;
 
   const attempts = [
     base,
-    // without buttons
     (() => {
       const a = { ...base };
       delete a.buttons;
       return a;
     })(),
-    // without small image
     (() => {
       const a = { ...base };
       delete a.buttons;
       if (a.assets) {
-        a.assets = { ...a.assets };
-        delete a.assets.small_image;
-        delete a.assets.small_text;
+        a.assets = {
+          large_image: a.assets.large_image,
+          large_text: a.assets.large_text,
+        };
       }
       return a;
     })(),
@@ -413,7 +402,6 @@ async function setActivitySafe(client, activity) {
         attempt.details,
         '/',
         attempt.state,
-        attempt.timestamps == null ? 'ts-cleared' : 'ts-set',
         attempt.assets?.large_image ? 'poster' : 'text',
         attempt.buttons ? 'btn' : 'nobtn',
       );
@@ -449,12 +437,11 @@ async function applyPendingPresence() {
     return { success: true };
   }
 
-  const statePreview = String(activity.state || '').replace(/\n/g, ' | ');
   log(
     'setting presence:',
     activity.details,
     '/',
-    statePreview,
+    activity.state,
     `type=${activity.type}`,
     body.isPaused ? 'paused' : 'playing',
   );
@@ -479,7 +466,6 @@ function updateDiscordPresence(body) {
 
     pendingBody = body;
 
-    // Serialize SET_ACTIVITY so an early "Paused" can't finish after "Watching"
     const run = presenceTail.then(() => applyPendingPresence());
     presenceTail = run.then(
       () => undefined,
@@ -511,7 +497,6 @@ function startWatchdog() {
     scheduleReconnect(500);
   }, 8000);
 
-  // Re-assert presence periodically so Discord restarts / clears recover
   if (!refreshTimer) {
     refreshTimer = setInterval(() => {
       if (!ready || !rpc || !pendingBody) return;
