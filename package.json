@@ -1,8 +1,8 @@
 {
   "name": "kstream-desktop",
   "productName": "kstream",
-  "version": "1.2.28",
-  "description": "kstream — stream movies & shows on Windows",
+  "version": "1.2.29",
+  "description": "kstream: stream movies and shows on Windows",
   "author": "kstream",
   "license": "MIT",
   "main": "src/main/main.js",
@@ -20,5 +20,11 @@
   "devDependencies": {
     "electron": "^39.3.0",
     "electron-builder": "^26.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "electron-winstaller"
+    ]
   }
 }
