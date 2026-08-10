@@ -389,7 +389,7 @@ function ensurePauseFreezeTimer() {
     } catch {
       // ignore
     }
-  }, 3000);
+  }, 1000);
 }
 
 /**

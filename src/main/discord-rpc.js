@@ -330,11 +330,13 @@ function activityKey(activity, isPaused) {
     y: activity.type || 0,
     p: Boolean(isPaused),
     i: activity.assets?.large_image || '',
+    // While paused we re-anchor every second — bucket must be fine-grained
+    // or Discord keeps animating the bar between rare updates.
     t: activity.timestamps?.start
-      ? Math.floor(activity.timestamps.start / 15000)
+      ? Math.floor(activity.timestamps.start / (isPaused ? 1000 : 15000))
       : 0,
     e: activity.timestamps?.end
-      ? Math.floor(activity.timestamps.end / 15000)
+      ? Math.floor(activity.timestamps.end / (isPaused ? 1000 : 15000))
       : 0,
   });
 }
@@ -398,23 +400,28 @@ async function applyPendingPresence() {
   const body = pendingBody || { idle: true };
   const activity = buildActivityPayload(body);
   const key = activityKey(activity, body.isPaused);
-  if (key === lastPayloadKey && ready && rpc) {
+  // Always push while paused — Discord animates the bar locally and only
+  // freezes if we keep re-anchoring start/end to "now - currentTime".
+  if (body.isPaused) {
+    lastPayloadKey = '';
+  } else if (key === lastPayloadKey && ready && rpc) {
     return { success: true };
   }
 
-    const ts = activity.timestamps;
-    log(
-      'setting presence:',
-      activity.details,
-      '/',
-      activity.state,
-      `type=${activity.type}`,
-      ts?.start && ts?.end
-        ? `bar ${Math.round((Date.now() - ts.start) / 1000)}s/${Math.round((ts.end - ts.start) / 1000)}s`
-        : ts?.start
-          ? 'elapsed-only'
-          : 'no-timer',
-    );
+  const ts = activity.timestamps;
+  log(
+    'setting presence:',
+    activity.details,
+    '/',
+    activity.state,
+    `type=${activity.type}`,
+    body.isPaused ? 'paused-freeze' : 'playing',
+    ts?.start && ts?.end
+      ? `bar ${Math.round((Date.now() - ts.start) / 1000)}s/${Math.round((ts.end - ts.start) / 1000)}s`
+      : ts?.start
+        ? 'elapsed-only'
+        : 'no-timer',
+  );
   const ok = await applyActivity(activity);
   if (!ok) {
     scheduleReconnect();
