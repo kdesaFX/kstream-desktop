@@ -4,6 +4,8 @@
  * Discord Rich Presence for kstream desktop.
  * Uses raw SET_ACTIVITY so Watching (type 3) is actually sent —
  * discord-rpc's setActivity() drops the type field.
+ *
+ * Buttons: Discord only shows them to OTHER users, never on your own profile.
  */
 const fs = require('fs');
 const path = require('path');
@@ -30,9 +32,11 @@ let rpc = null;
 let ready = false;
 let connectPromise = null;
 let lastPayloadKey = '';
-let pendingBody = null;
+let pendingBody = { idle: true };
 let registered = false;
 let logPath = null;
+let watchdogTimer = null;
+let reconnectTimer = null;
 
 function setLogPath(userDataPath) {
   try {
@@ -50,6 +54,13 @@ function log(...parts) {
     fs.appendFileSync(logPath, `${line}\n`);
   } catch {
     // ignore
+  }
+}
+
+function clearReconnectTimer() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
   }
 }
 
@@ -71,15 +82,38 @@ function destroyClient(reason) {
   }
 }
 
+function scheduleReconnect(delayMs = 2500) {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    if (ready && rpc) return;
+    log('attempting Discord reconnect…');
+    lastPayloadKey = '';
+    ensureClient()
+      .then((client) => {
+        if (!client) {
+          scheduleReconnect(Math.min(15000, delayMs * 1.5));
+          return null;
+        }
+        return flushPending(true);
+      })
+      .catch(() => scheduleReconnect(Math.min(15000, delayMs * 1.5)));
+  }, delayMs);
+}
+
 function attachClientGuards(client) {
   client.on('error', (err) => {
-    log('RPC error (kept):', err?.message || String(err));
+    log('RPC error:', err?.message || String(err));
+    ready = false;
+    if (rpc === client) rpc = null;
+    scheduleReconnect();
   });
 
   client.on('disconnected', () => {
-    log('RPC disconnected');
+    log('RPC disconnected (Discord likely restarted)');
     ready = false;
     if (rpc === client) rpc = null;
+    scheduleReconnect(1500);
   });
 }
 
@@ -112,6 +146,7 @@ async function ensureClient() {
         rpc.once('ready', () => {
           clearTimeout(timer);
           ready = true;
+          clearReconnectTimer();
           const who = rpc?.user?.username || rpc?.user?.id || 'unknown';
           log('connected as', who);
           resolve();
@@ -168,7 +203,6 @@ function buildActivityPayload(body) {
   }
   if (body.isPaused && isShow) state = `${state} · Paused`;
 
-  // Discord Activity object — include type explicitly (Watching = 3)
   const activity = {
     type: 3,
     details: title.slice(0, 128),
@@ -203,9 +237,6 @@ function activityKey(activity, isPaused) {
   });
 }
 
-/**
- * Bypass discord-rpc setActivity() which silently drops `type`.
- */
 async function applyActivity(activity) {
   const client = await ensureClient();
   if (!client) return false;
@@ -219,7 +250,6 @@ async function applyActivity(activity) {
     log('SET_ACTIVITY ok pid=', String(pid), 'type=', String(activity.type));
     return true;
   } catch (err) {
-    // Buttons can be rejected for some clients — retry without them
     if (activity.buttons) {
       const { buttons, ...bare } = activity;
       log(
@@ -234,15 +264,20 @@ async function applyActivity(activity) {
   }
 }
 
+async function flushPending(force = false) {
+  const body = pendingBody || { idle: true };
+  if (force) lastPayloadKey = '';
+  return updateDiscordPresence(body);
+}
+
 /**
  * @param {object|null} body
  * @returns {Promise<{ success: boolean, error?: string }>}
  */
 async function updateDiscordPresence(body) {
   try {
-    // Hard clear only on shutdown — menu/home uses idle presence instead
     if (body && body.clear && !body.idle) {
-      pendingBody = null;
+      pendingBody = { idle: true };
       lastPayloadKey = '';
       if (ready && rpc) {
         try {
@@ -269,6 +304,7 @@ async function updateDiscordPresence(body) {
     log('setting presence:', activity.details, '/', activity.state);
     const ok = await applyActivity(activity);
     if (!ok) {
+      scheduleReconnect();
       return { success: false, error: 'Discord RPC not available' };
     }
 
@@ -279,33 +315,36 @@ async function updateDiscordPresence(body) {
     log('presence update failed:', err?.message || err);
     destroyClient('setActivity-failed');
     lastPayloadKey = '';
-    try {
-      const activity = buildActivityPayload(body || { idle: true });
-      const ok = await applyActivity(activity);
-      if (ok) {
-        lastPayloadKey = activityKey(activity, body?.isPaused);
-        log('presence set ok after retry');
-        return { success: true };
-      }
-    } catch (retryErr) {
-      log('retry failed:', retryErr?.message || retryErr);
-    }
+    scheduleReconnect();
     return { success: false, error: err?.message || String(err) };
   }
 }
 
+function startWatchdog() {
+  if (watchdogTimer) return;
+  // If Discord was restarted while kstream stayed open, reconnect + re-apply
+  watchdogTimer = setInterval(() => {
+    if (ready && rpc) return;
+    scheduleReconnect(500);
+  }, 8000);
+}
+
 function startDiscordPresence(userDataPath) {
   if (userDataPath) setLogPath(userDataPath);
-  // Show browsing status while on home / before first play
+  startWatchdog();
   setTimeout(() => {
     updateDiscordPresence({ idle: true }).catch(() => {});
   }, 1500);
 }
 
 function shutdownDiscordPresence() {
+  clearReconnectTimer();
+  if (watchdogTimer) {
+    clearInterval(watchdogTimer);
+    watchdogTimer = null;
+  }
   pendingBody = null;
   lastPayloadKey = '';
-  // Best-effort clear so Discord does not keep Watching after quit
   if (ready && rpc) {
     try {
       rpc.request('SET_ACTIVITY', { pid: process.pid }).catch(() => {});
