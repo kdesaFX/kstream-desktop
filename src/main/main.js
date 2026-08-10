@@ -242,6 +242,15 @@ function createMainWindow() {
   });
 
   mainWindow.on('close', (event) => {
+    // X button (and Alt+F4): pause playback. Minimize does not hit this path.
+    try {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('kstream:pause-for-close');
+      }
+    } catch (err) {
+      console.warn('[kstream-desktop] pause-for-close send failed', err);
+    }
+
     if (!isQuitting && store.get('closeToTray', true)) {
       event.preventDefault();
       mainWindow.hide();

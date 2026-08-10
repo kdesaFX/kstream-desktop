@@ -19,6 +19,18 @@ async function invokeDesktop(name, body) {
 // Direct IPC for the web app (preferred). Plasmo postMessage relay is fragile in Electron.
 contextBridge.exposeInMainWorld('__KSTREAM_DESKTOP_IPC__', {
   invoke: (name, body) => invokeDesktop(name, body),
+  // Fired when the user hits the window X (close-to-tray). Minimize does not fire this.
+  onPauseForClose: (cb) => {
+    const handler = () => {
+      try {
+        cb();
+      } catch (err) {
+        console.error('[kstream-desktop] pause-for-close handler failed', err);
+      }
+    };
+    ipcRenderer.on('kstream:pause-for-close', handler);
+    return () => ipcRenderer.removeListener('kstream:pause-for-close', handler);
+  },
 });
 
 // Plasmo messaging relay fallback: web posts { name, body, relayId, instanceId }

@@ -122,7 +122,18 @@ async function ensureClient() {
   return connectPromise;
 }
 
+function buildIdleActivity() {
+  return {
+    type: 3,
+    details: 'Browsing',
+    state: 'Looking for something to watch',
+    instance: false,
+  };
+}
+
 function buildActivityPayload(body) {
+  if (body?.idle) return buildIdleActivity();
+
   const title = (body.title || 'Something').trim();
   const episodeTitle = (body.episodeTitle || '').trim();
   const seasonNumber = Number(body.seasonNumber);
@@ -199,7 +210,8 @@ async function applyActivity(activity) {
  */
 async function updateDiscordPresence(body) {
   try {
-    if (!body || body.clear) {
+    // Hard clear only on shutdown — menu/home uses idle presence instead
+    if (body && body.clear && !body.idle) {
       pendingBody = null;
       lastPayloadKey = '';
       if (ready && rpc) {
@@ -211,6 +223,10 @@ async function updateDiscordPresence(body) {
         }
       }
       return { success: true };
+    }
+
+    if (!body || body.idle) {
+      body = { idle: true };
     }
 
     pendingBody = body;
@@ -234,10 +250,10 @@ async function updateDiscordPresence(body) {
     destroyClient('setActivity-failed');
     lastPayloadKey = '';
     try {
-      const activity = buildActivityPayload(body);
+      const activity = buildActivityPayload(body || { idle: true });
       const ok = await applyActivity(activity);
       if (ok) {
-        lastPayloadKey = activityKey(activity, body.isPaused);
+        lastPayloadKey = activityKey(activity, body?.isPaused);
         log('presence set ok after retry');
         return { success: true };
       }
@@ -250,11 +266,23 @@ async function updateDiscordPresence(body) {
 
 function startDiscordPresence(userDataPath) {
   if (userDataPath) setLogPath(userDataPath);
+  // Show browsing status while on home / before first play
+  setTimeout(() => {
+    updateDiscordPresence({ idle: true }).catch(() => {});
+  }, 1500);
 }
 
 function shutdownDiscordPresence() {
   pendingBody = null;
   lastPayloadKey = '';
+  // Best-effort clear so Discord does not keep Watching after quit
+  if (ready && rpc) {
+    try {
+      rpc.request('SET_ACTIVITY', { pid: process.pid }).catch(() => {});
+    } catch {
+      // ignore
+    }
+  }
   destroyClient('shutdown');
 }
 
