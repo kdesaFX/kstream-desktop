@@ -9,6 +9,9 @@ const { spawn, execFileSync } = require('child_process');
 
 const PRODUCT = 'kstream';
 const EXE_NAME = 'kstream.exe';
+const ICON_NAME = 'icon.ico';
+const PUBLISHER = 'kstream';
+const UNINSTALL_KEY = `Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${PRODUCT}`;
 
 function sleepSync(ms) {
   const end = Date.now() + ms;
@@ -70,6 +73,35 @@ function getAppRoot() {
   return path.join(__dirname, '..', '..');
 }
 
+/** Prefer icon.ico next to the exe (extraFiles); fall back to packaged / repo assets. */
+function resolveBrandIconPaths() {
+  const candidates = [];
+  if (isPackaged()) {
+    candidates.push(path.join(path.dirname(process.execPath), ICON_NAME));
+    candidates.push(path.join(path.dirname(process.execPath), 'logo.png'));
+    candidates.push(path.join(process.resourcesPath, ICON_NAME));
+    candidates.push(path.join(process.resourcesPath, 'logo.png'));
+  }
+  const root = getAppRoot();
+  candidates.push(path.join(root, ICON_NAME), path.join(root, 'logo.png'));
+  candidates.push(path.join(__dirname, '..', '..', ICON_NAME));
+  candidates.push(path.join(__dirname, '..', '..', 'logo.png'));
+
+  let ico = null;
+  let png = null;
+  for (const p of candidates) {
+    try {
+      if (!ofs.existsSync(p) && !fs.existsSync(p)) continue;
+    } catch {
+      continue;
+    }
+    const lower = p.toLowerCase();
+    if (!ico && lower.endsWith('.ico')) ico = p;
+    if (!png && lower.endsWith('.png')) png = p;
+  }
+  return { ico, png, any: ico || png || null };
+}
+
 function configurePortableUserData() {
   if (!isPackaged()) return false;
   if (isRunningFromInstallDir()) return false;
@@ -102,6 +134,24 @@ function writePortableMarker() {
   ofs.writeFileSync(getPortableMarkerPath(), JSON.stringify(marker, null, 2), 'utf8');
 }
 
+function ensureIconBesideExe(installDir) {
+  const destIco = path.join(installDir, ICON_NAME);
+  if (ofs.existsSync(destIco)) return destIco;
+
+  const { ico, png } = resolveBrandIconPaths();
+  const src = ico || png;
+  if (!src) return null;
+  try {
+    ofs.copyFileSync(src, destIco);
+    return destIco;
+  } catch (err) {
+    console.warn('[kstream-desktop] could not place icon.ico', err.message);
+    return ofs.existsSync(path.join(installDir, EXE_NAME))
+      ? path.join(installDir, EXE_NAME)
+      : null;
+  }
+}
+
 function createShortcuts(exePath, installDir) {
   const desktop = path.join(app.getPath('desktop'), `${PRODUCT}.lnk`);
   const startMenuDir = path.join(
@@ -114,16 +164,117 @@ function createShortcuts(exePath, installDir) {
   fs.mkdirSync(startMenuDir, { recursive: true });
   const startMenu = path.join(startMenuDir, `${PRODUCT}.lnk`);
 
+  const iconPath = ensureIconBesideExe(installDir) || exePath;
+
   const shortcut = {
     target: exePath,
     cwd: installDir,
     description: 'kstream',
-    icon: exePath,
+    icon: iconPath,
     iconIndex: 0,
   };
 
   shell.writeShortcutLink(desktop, 'create', shortcut);
   shell.writeShortcutLink(startMenu, 'create', shortcut);
+}
+
+function registerUninstallEntry(installDir, exePath) {
+  if (process.platform !== 'win32') return;
+  try {
+    const iconPath = ensureIconBesideExe(installDir) || exePath;
+    const displayIcon = iconPath.toLowerCase().endsWith('.ico')
+      ? iconPath
+      : `${exePath},0`;
+
+    const values = {
+      DisplayName: PRODUCT,
+      DisplayVersion: app.getVersion(),
+      Publisher: PUBLISHER,
+      DisplayIcon: displayIcon,
+      InstallLocation: installDir,
+      InstallDate: new Date().toISOString().slice(0, 10).replace(/-/g, ''),
+      EstimatedSize: estimateInstallSizeKb(installDir),
+      NoModify: 1,
+      NoRepair: 1,
+      UninstallString: `"${exePath}" --uninstall`,
+      QuietUninstallString: `"${exePath}" --uninstall --quiet`,
+      URLInfoAbout: 'https://github.com/kdesaFX/kstream-desktop',
+      HelpLink: 'https://kstream-one.vercel.app',
+    };
+
+    const scriptLines = [
+      `$key = 'HKCU:\\${UNINSTALL_KEY.replace(/\\/g, '\\\\')}'`,
+      `New-Item -Path $key -Force | Out-Null`,
+    ];
+    for (const [name, value] of Object.entries(values)) {
+      const isDword = typeof value === 'number';
+      const lit = isDword
+        ? String(value)
+        : `'${String(value).replace(/'/g, "''")}'`;
+      const type = isDword ? 'DWord' : 'String';
+      scriptLines.push(
+        `New-ItemProperty -Path $key -Name '${name}' -PropertyType ${type} -Value ${lit} -Force | Out-Null`,
+      );
+    }
+
+    execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', scriptLines.join('; ')],
+      { timeout: 15000, windowsHide: true },
+    );
+  } catch (err) {
+    console.warn('[kstream-desktop] ARP register failed', err.message);
+  }
+}
+
+function removeUninstallEntry() {
+  if (process.platform !== 'win32') return;
+  try {
+    execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        `Remove-Item -Path 'HKCU:\\${UNINSTALL_KEY.replace(/\\/g, '\\\\')}' -Recurse -Force -ErrorAction SilentlyContinue`,
+      ],
+      { timeout: 10000, windowsHide: true },
+    );
+  } catch (err) {
+    console.warn('[kstream-desktop] ARP remove failed', err.message);
+  }
+}
+
+function estimateInstallSizeKb(installDir) {
+  try {
+    const exe = path.join(installDir, EXE_NAME);
+    if (ofs.existsSync(exe)) {
+      return Math.max(1, Math.round(ofs.statSync(exe).size / 1024));
+    }
+  } catch {
+    // ignore
+  }
+  return 320000;
+}
+
+function removeShortcuts() {
+  const desktop = path.join(app.getPath('desktop'), `${PRODUCT}.lnk`);
+  const startMenu = path.join(
+    app.getPath('appData'),
+    'Microsoft',
+    'Windows',
+    'Start Menu',
+    'Programs',
+    `${PRODUCT}.lnk`,
+  );
+  for (const p of [desktop, startMenu]) {
+    try {
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    } catch {
+      // ignore
+    }
+  }
 }
 
 /** Kill only kstream processes whose exe lives under installDir (never our current process). */
@@ -218,6 +369,24 @@ function copyAppToInstallDir(installDir) {
   removePathWithRetry(backup);
   copyAppTree(appRoot, staging);
 
+  // Guarantee brand assets land next to the installed exe.
+  for (const name of [ICON_NAME, 'logo.png']) {
+    const fromRoot = path.join(appRoot, name);
+    const fromRes = path.join(appRoot, 'resources', name);
+    const src = ofs.existsSync(fromRoot)
+      ? fromRoot
+      : ofs.existsSync(fromRes)
+        ? fromRes
+        : null;
+    if (src) {
+      try {
+        ofs.copyFileSync(src, path.join(staging, name));
+      } catch (err) {
+        console.warn('[kstream-desktop] icon copy', name, err.message);
+      }
+    }
+  }
+
   ofs.writeFileSync(
     path.join(staging, '.kstream-installed'),
     JSON.stringify(
@@ -294,6 +463,7 @@ async function installToAppData() {
   }
 
   createShortcuts(exePath, installDir);
+  registerUninstallEntry(installDir, exePath);
 
   return { ok: true, installDir, exePath };
 }
@@ -309,13 +479,68 @@ function launchInstalledAndExit(exePath) {
 }
 
 function getSetupInfo() {
+  const icons = resolveBrandIconPaths();
   return {
     version: app.getVersion(),
     installDir: getInstallDir(),
     portableRoot: getPortableRoot(),
     packaged: isPackaged(),
-    logoPath: path.join(getAppRoot(), 'logo.png'),
+    logoPath: icons.png || icons.any,
   };
+}
+
+/**
+ * Refresh branding for an existing install (icons, shortcuts, Apps list entry).
+ * Safe to call on every launched installed build.
+ */
+function ensureInstalledBranding() {
+  if (!isPackaged() || !isRunningFromInstallDir()) return;
+  const installDir = getInstallDir();
+  const exePath = path.join(installDir, EXE_NAME);
+  if (!ofs.existsSync(exePath)) return;
+  try {
+    createShortcuts(exePath, installDir);
+    registerUninstallEntry(installDir, exePath);
+  } catch (err) {
+    console.warn('[kstream-desktop] branding refresh failed', err.message);
+  }
+}
+
+async function uninstallInstalled(quiet = false) {
+  const installDir = getInstallDir();
+  removeShortcuts();
+  removeUninstallEntry();
+
+  // If we're running from the install dir, schedule a delayed delete after exit.
+  if (isRunningFromInstallDir()) {
+    const script = `
+Start-Sleep -Seconds 2
+Remove-Item -LiteralPath '${installDir.replace(/'/g, "''")}' -Recurse -Force -ErrorAction SilentlyContinue
+`;
+    spawn(
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+      { detached: true, stdio: 'ignore', windowsHide: true },
+    ).unref();
+    app.exit(0);
+    return;
+  }
+
+  stopProcessesUnder(installDir);
+  removePathWithRetry(installDir);
+  if (!quiet) {
+    try {
+      const { dialog } = require('electron');
+      dialog.showMessageBoxSync({
+        type: 'info',
+        title: 'kstream',
+        message: 'kstream was uninstalled.',
+      });
+    } catch {
+      // ignore
+    }
+  }
+  app.exit(0);
 }
 
 module.exports = {
@@ -329,4 +554,7 @@ module.exports = {
   getInstallDir,
   isRunningFromInstallDir,
   hasPortableMarker,
+  resolveBrandIconPaths,
+  ensureInstalledBranding,
+  uninstallInstalled,
 };

@@ -23,6 +23,10 @@ const {
   launchInstalledAndExit,
   getSetupInfo,
   getInstallDir,
+  resolveBrandIconPaths,
+  ensureInstalledBranding,
+  uninstallInstalled,
+  isRunningFromInstallDir,
 } = require('./install');
 const {
   updateDiscordPresence,
@@ -48,7 +52,6 @@ process.on('unhandledRejection', (reason) => {
 // Look like Chrome, not Electron — many CDNs/WAFs block Electron UAs.
 app.userAgentFallback = CHROME_UA;
 
-const ROOT = path.join(__dirname, '..', '..');
 const PRELOAD = path.join(__dirname, '..', 'preload', 'preload.js');
 const SETUP_PRELOAD = path.join(__dirname, '..', 'preload', 'setup-preload.js');
 const WELCOME_HTML = path.join(__dirname, '..', 'renderer', 'welcome', 'index.html');
@@ -106,8 +109,10 @@ function getStreamHostname() {
 function createTray(win) {
   if (tray) return tray;
 
-  const iconPath = path.join(ROOT, 'logo.png');
-  let image = nativeImage.createFromPath(iconPath);
+  const { any: iconPath } = resolveBrandIconPaths();
+  let image = iconPath
+    ? nativeImage.createFromPath(iconPath)
+    : nativeImage.createEmpty();
   if (!image.isEmpty()) {
     image = image.resize({ width: 16, height: 16 });
   }
@@ -157,6 +162,8 @@ function createSetupWindow() {
   const width = Math.min(520, Math.max(420, workW - 80));
   const height = Math.min(680, Math.max(560, workH - 80));
 
+  const { any: iconPath } = resolveBrandIconPaths();
+
   mainWindow = new BrowserWindow({
     width,
     height,
@@ -167,7 +174,7 @@ function createSetupWindow() {
     center: true,
     autoHideMenuBar: true,
     backgroundColor: '#030303',
-    icon: path.join(ROOT, 'logo.png'),
+    icon: iconPath || undefined,
     title: 'kstream',
     webPreferences: {
       preload: SETUP_PRELOAD,
@@ -206,7 +213,7 @@ function createSetupWindow() {
 function createMainWindow() {
   showingSetup = false;
   const bounds = store.get('windowBounds', { width: 1280, height: 800 });
-  const iconPath = path.join(ROOT, 'logo.png');
+  const { any: iconPath } = resolveBrandIconPaths();
 
   mainWindow = new BrowserWindow({
     width: bounds.width || 1280,
@@ -218,7 +225,7 @@ function createMainWindow() {
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#0b1220',
-    icon: iconPath,
+    icon: iconPath || undefined,
     title: 'kstream',
     webPreferences: {
       preload: PRELOAD,
@@ -603,10 +610,19 @@ if (!gotLock) {
     }
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    if (process.argv.includes('--uninstall')) {
+      await uninstallInstalled(process.argv.includes('--quiet'));
+      return;
+    }
+
     setupInterceptors(session.defaultSession, { getStreamHostname });
     registerIpc();
     registerSetupIpc();
+
+    if (isRunningFromInstallDir()) {
+      ensureInstalledBranding();
+    }
 
     if (needsSetup(store)) {
       createSetupWindow();

@@ -1,9 +1,9 @@
 {
   "name": "kstream-desktop",
   "productName": "kstream",
-  "version": "1.2.26",
-  "description": "kstream Windows desktop app — branded setup, native scraping, auto-updates, system tray",
-  "author": "kdesaFX",
+  "version": "1.2.27",
+  "description": "kstream — stream movies & shows on Windows",
+  "author": "kstream",
   "license": "MIT",
   "main": "src/main/main.js",
   "scripts": {
@@ -23,6 +23,7 @@
   "build": {
     "appId": "com.kdesafx.kstream",
     "productName": "kstream",
+    "copyright": "Copyright © 2026 kstream",
     "directories": {
       "output": "dist"
     },
@@ -37,8 +38,19 @@
       "icon.ico",
       "package.json"
     ],
+    "extraFiles": [
+      {
+        "from": "icon.ico",
+        "to": "icon.ico"
+      },
+      {
+        "from": "logo.png",
+        "to": "logo.png"
+      }
+    ],
     "win": {
       "icon": "icon.ico",
+      "publisherName": "kstream",
       "target": [
         {
           "target": "portable",
