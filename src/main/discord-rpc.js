@@ -278,11 +278,32 @@ function buildActivityPayload(body) {
     buttons: [{ label: 'Watch now on kstream', url: WATCH_URL }],
   };
 
-  if (!isPaused && typeof body.startTimestamp === 'number') {
-    activity.timestamps = { start: Math.round(body.startTimestamp) };
-  } else if (!isPaused) {
-    // Always show an elapsed timer while actively watching
-    activity.timestamps = { start: Date.now() };
+  // Spotify-style progress bar: Discord shows a bar when BOTH start and end exist
+  if (!isPaused) {
+    let start =
+      typeof body.startTimestamp === 'number'
+        ? Math.round(body.startTimestamp)
+        : Date.now();
+    const durationMs =
+      typeof body.durationSec === 'number' && body.durationSec > 0
+        ? Math.round(body.durationSec * 1000)
+        : typeof body.endTimestamp === 'number'
+          ? Math.round(body.endTimestamp) - start
+          : 0;
+
+    if (typeof body.endTimestamp === 'number' && body.endTimestamp > start) {
+      activity.timestamps = {
+        start,
+        end: Math.round(body.endTimestamp),
+      };
+    } else if (durationMs > 0) {
+      activity.timestamps = {
+        start,
+        end: start + durationMs,
+      };
+    } else {
+      activity.timestamps = { start };
+    }
   }
 
   // Poster large + kstream logo small (Crunchyroll layout)
@@ -307,6 +328,9 @@ function activityKey(activity, isPaused) {
     i: activity.assets?.large_image || '',
     t: activity.timestamps?.start
       ? Math.floor(activity.timestamps.start / 15000)
+      : 0,
+    e: activity.timestamps?.end
+      ? Math.floor(activity.timestamps.end / 15000)
       : 0,
   });
 }
