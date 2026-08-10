@@ -388,7 +388,39 @@ async function flushPending(force = false) {
   return updateDiscordPresence(body);
 }
 
-async function updateDiscordPresence(body) {
+let presenceTail = Promise.resolve();
+
+async function applyPendingPresence() {
+  const body = pendingBody || { idle: true };
+  const activity = buildActivityPayload(body);
+  const key = activityKey(activity, body.isPaused);
+  if (key === lastPayloadKey && ready && rpc) {
+    return { success: true };
+  }
+
+  const ts = activity.timestamps;
+  log(
+    'setting presence:',
+    activity.details,
+    '/',
+    activity.state,
+    ts?.start && ts?.end
+      ? `bar ${Math.round((Date.now() - ts.start) / 1000)}s/${Math.round((ts.end - ts.start) / 1000)}s`
+      : ts?.start
+        ? 'elapsed-only'
+        : 'no-timer',
+  );
+  const ok = await applyActivity(activity);
+  if (!ok) {
+    scheduleReconnect();
+    return { success: false, error: 'Discord RPC not available' };
+  }
+
+  lastPayloadKey = key;
+  return { success: true };
+}
+
+function updateDiscordPresence(body) {
   try {
     // Old website builds send { clear: true } and used to wipe status.
     if (body && body.clear && !body.idle) {
@@ -398,27 +430,29 @@ async function updateDiscordPresence(body) {
     if (!body || body.idle) body = { idle: true };
 
     pendingBody = body;
-    const activity = buildActivityPayload(body);
-    const key = activityKey(activity, body.isPaused);
-    if (key === lastPayloadKey && ready && rpc) {
-      return { success: true };
-    }
 
-    log('setting presence:', activity.details, '/', activity.state);
-    const ok = await applyActivity(activity);
-    if (!ok) {
+    // Serialize SET_ACTIVITY so an early "Paused" can't finish after "Watching"
+    const run = presenceTail.then(() => applyPendingPresence());
+    presenceTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run.catch((err) => {
+      log('presence update failed:', err?.message || err);
+      destroyClient('setActivity-failed');
+      lastPayloadKey = '';
       scheduleReconnect();
-      return { success: false, error: 'Discord RPC not available' };
-    }
-
-    lastPayloadKey = key;
-    return { success: true };
+      return { success: false, error: err?.message || String(err) };
+    });
   } catch (err) {
     log('presence update failed:', err?.message || err);
     destroyClient('setActivity-failed');
     lastPayloadKey = '';
     scheduleReconnect();
-    return { success: false, error: err?.message || String(err) };
+    return Promise.resolve({
+      success: false,
+      error: err?.message || String(err),
+    });
   }
 }
 
