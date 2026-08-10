@@ -336,6 +336,8 @@ function registerSetupIpc() {
 }
 
 let lastMediaBody = null;
+/** @type {Map<string, { releaseDate?: string, releaseYear?: number }>} */
+const releaseDateCache = new Map();
 
 function registerIpc() {
   Object.entries(handlers).forEach(([channel, handler]) => {
@@ -373,8 +375,8 @@ function registerIpc() {
 }
 
 /**
- * Live site can lag behind desktop. Read the real <video> element + window.meta
- * so duration/position/year work even on older web builds.
+ * Live site can lag behind desktop. Read <video> + window.meta, and if the
+ * month is missing, resolve release_date from TMDB in the page context.
  */
 async function enrichPresenceFromVideo(body) {
   if (!body || body.idle || body.clear) return body;
@@ -393,8 +395,12 @@ async function enrichPresenceFromVideo(body) {
             Number.isFinite(duration) && duration > 0 && duration !== Infinity
               ? duration
               : 0,
-          currentTime: Number.isFinite(currentTime) ? Math.max(0, currentTime) : 0,
+          currentTime: Number.isFinite(currentTime)
+            ? Math.max(0, currentTime)
+            : 0,
           paused: v ? Boolean(v.paused) : null,
+          tmdbId: meta && meta.tmdbId ? String(meta.tmdbId) : null,
+          mediaType: meta && meta.type === 'show' ? 'show' : 'movie',
           releaseYear:
             meta && typeof meta.year === 'number' && meta.year > 0
               ? meta.year
@@ -413,19 +419,33 @@ async function enrichPresenceFromVideo(body) {
     if (typeof info.paused === 'boolean') {
       next.isPaused = info.paused;
     }
-    if (info.releaseDate && !next.releaseDate) {
-      next.releaseDate = info.releaseDate;
-    }
-    if (info.releaseYear && !next.releaseYear) {
-      next.releaseYear = info.releaseYear;
+    if (info.releaseDate) next.releaseDate = info.releaseDate;
+    if (info.releaseYear) next.releaseYear = info.releaseYear;
+
+    // Fill month+year from TMDB when the web build only has a year
+    const needsMonth =
+      !next.releaseDate || !/^\d{4}-\d{2}/.test(String(next.releaseDate));
+    if (needsMonth && info.tmdbId) {
+      const cached = releaseDateCache.get(info.tmdbId);
+      if (cached?.releaseDate) {
+        next.releaseDate = cached.releaseDate;
+        if (cached.releaseYear) next.releaseYear = cached.releaseYear;
+      } else {
+        const fetched = await fetchReleaseDateFromPage(
+          info.tmdbId,
+          info.mediaType,
+        );
+        if (fetched?.releaseDate) {
+          releaseDateCache.set(info.tmdbId, fetched);
+          next.releaseDate = fetched.releaseDate;
+          if (fetched.releaseYear) next.releaseYear = fetched.releaseYear;
+        }
+      }
     }
 
     if (info.durationSec > 0) {
       next.durationSec = info.durationSec;
       if (next.isPaused) {
-        // Discord animates Listening bars locally and throttles presence
-        // updates (~15s). Re-anchoring causes rubber-banding — drop the
-        // timeline while paused so it stays put.
         delete next.startTimestamp;
         delete next.endTimestamp;
         next.clearTimestamps = true;
@@ -443,6 +463,59 @@ async function enrichPresenceFromVideo(body) {
       err?.message || err,
     );
     return body;
+  }
+}
+
+/** Resolve YYYY-MM-DD from TMDB inside the loaded site (uses its existing key). */
+async function fetchReleaseDateFromPage(tmdbId, mediaType) {
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  const kind = mediaType === 'show' ? 'tv' : 'movie';
+  try {
+    const result = await mainWindow.webContents.executeJavaScript(
+      `(async () => {
+        const id = ${JSON.stringify(String(tmdbId))};
+        const kind = ${JSON.stringify(kind)};
+        let token =
+          (window.__CONFIG__ && window.__CONFIG__.VITE_TMDB_READ_API_KEY) || '';
+        if (!token) {
+          const script = [...document.querySelectorAll('script[src]')].find(
+            (s) => /\\/assets\\/index-/.test(s.src),
+          );
+          if (script) {
+            const text = await fetch(script.src).then((r) => r.text());
+            const m = text.match(/TMDB_READ_API_KEY:"(eyJ[^"]+)"/);
+            if (m) token = m[1];
+          }
+        }
+        if (!token) return null;
+        const res = await fetch(
+          'https://api.themoviedb.org/3/' + kind + '/' + id,
+          {
+            headers: {
+              Authorization: 'Bearer ' + token,
+              Accept: 'application/json',
+            },
+          },
+        );
+        if (!res.ok) return null;
+        const data = await res.json();
+        const releaseDate = data.release_date || data.first_air_date || null;
+        if (!releaseDate) return null;
+        const year = Number(String(releaseDate).slice(0, 4));
+        return {
+          releaseDate: String(releaseDate).slice(0, 10),
+          releaseYear: Number.isFinite(year) && year > 0 ? year : null,
+        };
+      })()`,
+      true,
+    );
+    return result;
+  } catch (err) {
+    console.warn(
+      '[kstream-desktop] TMDB release date fetch failed',
+      err?.message || err,
+    );
+    return null;
   }
 }
 
