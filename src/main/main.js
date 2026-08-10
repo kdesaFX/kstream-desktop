@@ -28,6 +28,7 @@ const {
   updateDiscordPresence,
   startDiscordPresence,
   shutdownDiscordPresence,
+  setLogPath,
 } = require('./discord-rpc');
 
 // Must run before userData / store is touched.
@@ -281,7 +282,7 @@ function openAppAfterSetup() {
   }
   createMainWindow();
   setupAutoUpdater();
-  startDiscordPresence();
+  startDiscordPresence(app.getPath('userData'));
 }
 
 function registerSetupIpc() {
@@ -442,7 +443,7 @@ if (!gotLock) {
     } else {
       createMainWindow();
       setupAutoUpdater();
-      startDiscordPresence();
+      startDiscordPresence(app.getPath('userData'));
     }
 
     app.on('activate', () => {

@@ -2,48 +2,48 @@
 
 /**
  * Discord Rich Presence for kstream desktop.
- * Connects lazily only while watching — never on the home screen.
+ * Works with Discord stable and Vesktop (arRPC).
+ * Connects on first watch; stays connected for the app session.
  */
+const fs = require('fs');
+const path = require('path');
+
 const DISCORD_CLIENT_ID = '1536251834203770941';
-
-/**
- * Optional Rich Presence art asset key (Discord Developer Portal → Art Assets).
- * Leave unset until an asset named "kstream" is uploaded.
- */
 const LOGO_ASSET = process.env.KSTREAM_DISCORD_ASSET || '';
-
-const MAX_CONNECT_ATTEMPTS = 8;
 
 let rpc = null;
 let ready = false;
 let connectPromise = null;
 let lastPayloadKey = '';
 let pendingBody = null;
-let retryTimer = null;
-let connectAttempts = 0;
 let registered = false;
-let idleDisconnectTimer = null;
+let logPath = null;
 
-function clearRetryTimer() {
-  if (retryTimer) {
-    clearTimeout(retryTimer);
-    retryTimer = null;
+function setLogPath(userDataPath) {
+  try {
+    logPath = path.join(userDataPath, 'discord-rpc.log');
+  } catch {
+    logPath = null;
   }
 }
 
-function clearIdleDisconnect() {
-  if (idleDisconnectTimer) {
-    clearTimeout(idleDisconnectTimer);
-    idleDisconnectTimer = null;
+function log(...parts) {
+  const line = `[${new Date().toISOString()}] ${parts.join(' ')}`;
+  console.log('[kstream-desktop]', ...parts);
+  if (!logPath) return;
+  try {
+    fs.appendFileSync(logPath, `${line}\n`);
+  } catch {
+    // ignore
   }
 }
 
-function destroyClient() {
-  clearRetryTimer();
+function destroyClient(reason) {
   ready = false;
   const client = rpc;
   rpc = null;
   if (!client) return;
+  log('destroyClient:', reason || '');
   try {
     client.removeAllListeners();
   } catch {
@@ -58,21 +58,12 @@ function destroyClient() {
 
 function attachClientGuards(client) {
   client.on('error', (err) => {
-    console.warn(
-      '[kstream-desktop] Discord RPC error (ignored):',
-      err?.message || err,
-    );
-    ready = false;
-    try {
-      client.destroy();
-    } catch {
-      // ignore
-    }
-    if (rpc === client) rpc = null;
+    // Vesktop/arRPC sometimes emits soft errors — do not tear down immediately
+    log('RPC error (kept):', err?.message || String(err));
   });
 
   client.on('disconnected', () => {
-    console.warn('[kstream-desktop] Discord RPC disconnected');
+    log('RPC disconnected');
     ready = false;
     if (rpc === client) rpc = null;
   });
@@ -82,12 +73,7 @@ async function ensureClient() {
   if (ready && rpc) return rpc;
   if (connectPromise) return connectPromise;
 
-  if (connectAttempts >= MAX_CONNECT_ATTEMPTS) {
-    return null;
-  }
-
   connectPromise = (async () => {
-    connectAttempts += 1;
     try {
       // eslint-disable-next-line global-require, import/no-extraneous-dependencies
       const DiscordRPC = require('discord-rpc');
@@ -96,27 +82,24 @@ async function ensureClient() {
           DiscordRPC.register(DISCORD_CLIENT_ID);
           registered = true;
         } catch (regErr) {
-          console.warn(
-            '[kstream-desktop] Discord register skipped:',
-            regErr?.message || regErr,
-          );
+          log('register skipped:', regErr?.message || regErr);
         }
       }
 
-      destroyClient();
+      if (rpc) destroyClient('reconnect');
       rpc = new DiscordRPC.Client({ transport: 'ipc' });
       attachClientGuards(rpc);
 
       await new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           reject(new Error('Discord RPC connect timeout'));
-        }, 4000);
+        }, 6000);
 
         rpc.once('ready', () => {
           clearTimeout(timer);
           ready = true;
-          connectAttempts = 0;
-          console.log('[kstream-desktop] Discord Rich Presence connected');
+          const who = rpc?.user?.username || rpc?.user?.id || 'unknown';
+          log('connected as', who);
           resolve();
         });
 
@@ -126,15 +109,11 @@ async function ensureClient() {
         });
       });
 
-      clearRetryTimer();
       return rpc;
     } catch (err) {
       ready = false;
-      destroyClient();
-      console.warn(
-        '[kstream-desktop] Discord RPC unavailable:',
-        err?.message || err,
-      );
+      destroyClient('connect-failed');
+      log('unavailable:', err?.message || err);
       return null;
     } finally {
       connectPromise = null;
@@ -162,45 +141,24 @@ function buildActivity(body) {
   } else {
     state = body.isPaused ? 'Paused' : 'Watching';
   }
-
-  if (body.isPaused && isShow) {
-    state = `${state} · Paused`;
-  }
+  if (body.isPaused && isShow) state = `${state} · Paused`;
 
   const activity = {
     details: title.slice(0, 128),
     state: state.slice(0, 128),
     instance: false,
-    type: 3, // WATCHING
+    // Watching — Vesktop/arRPC may ignore type; still fine as Playing fallback
+    type: 3,
   };
 
   if (LOGO_ASSET) {
     activity.largeImageKey = LOGO_ASSET;
     activity.largeImageText = title.slice(0, 128);
-    activity.smallImageKey = LOGO_ASSET;
-    activity.smallImageText = body.isPaused ? 'Paused' : 'Playing';
   }
 
   if (!body.isPaused && typeof body.startTimestamp === 'number') {
     activity.startTimestamp = body.startTimestamp;
   }
-
-  let watchUrl = 'https://kstream-one.vercel.app';
-  if (typeof body.url === 'string' && body.url.startsWith('http')) {
-    try {
-      const parsed = new URL(body.url);
-      watchUrl = `${parsed.origin}${parsed.pathname}`.slice(0, 512);
-    } catch {
-      // keep default
-    }
-  }
-
-  activity.buttons = [
-    {
-      label: 'Watch on kstream',
-      url: watchUrl,
-    },
-  ];
 
   return activity;
 }
@@ -220,57 +178,21 @@ async function applyActivity(activity) {
   const client = await ensureClient();
   if (!client) return false;
 
-  try {
-    await client.setActivity(activity);
-    return true;
-  } catch (setErr) {
-    if (activity.buttons || activity.largeImageKey) {
-      const fallback = {
-        details: activity.details,
-        state: activity.state,
-        instance: false,
-        type: 3,
-      };
-      if (activity.startTimestamp) {
-        fallback.startTimestamp = activity.startTimestamp;
-      }
-      console.warn(
-        '[kstream-desktop] setActivity failed, retrying without buttons/assets:',
-        setErr?.message || setErr,
-      );
-      await client.setActivity(fallback);
-      return true;
-    }
-    throw setErr;
+  // Bare payload first — buttons/assets often break Vesktop/arRPC display
+  const bare = {
+    details: activity.details,
+    state: activity.state,
+    instance: false,
+    type: 3,
+  };
+  if (activity.startTimestamp) bare.startTimestamp = activity.startTimestamp;
+  if (activity.largeImageKey) {
+    bare.largeImageKey = activity.largeImageKey;
+    bare.largeImageText = activity.largeImageText;
   }
-}
 
-function scheduleConnectRetry() {
-  if (retryTimer || connectAttempts >= MAX_CONNECT_ATTEMPTS) return;
-  const delay = Math.min(30000, 2000 * 2 ** Math.min(connectAttempts, 4));
-  retryTimer = setTimeout(() => {
-    retryTimer = null;
-    if (ready && rpc) return;
-    if (!pendingBody) return;
-    ensureClient()
-      .then((client) => {
-        if (client) return flushPending();
-        scheduleConnectRetry();
-        return null;
-      })
-      .catch(() => scheduleConnectRetry());
-  }, delay);
-}
-
-function scheduleIdleDisconnect() {
-  clearIdleDisconnect();
-  // Drop Discord IPC after leaving the player so home screen stays quiet
-  idleDisconnectTimer = setTimeout(() => {
-    idleDisconnectTimer = null;
-    if (pendingBody) return;
-    destroyClient();
-    console.log('[kstream-desktop] Discord RPC idle disconnect');
-  }, 15000);
+  await client.setActivity(bare);
+  return true;
 }
 
 /**
@@ -282,79 +204,62 @@ async function updateDiscordPresence(body) {
     if (!body || body.clear) {
       pendingBody = null;
       lastPayloadKey = '';
-      clearRetryTimer();
       if (ready && rpc) {
         try {
           await rpc.clearActivity();
-        } catch {
-          // ignore
+          log('presence cleared');
+        } catch (err) {
+          log('clear failed:', err?.message || err);
         }
-        console.log('[kstream-desktop] Discord presence cleared');
       }
-      scheduleIdleDisconnect();
       return { success: true };
     }
 
-    clearIdleDisconnect();
     pendingBody = body;
-    // Fresh content can retry connecting again
-    if (connectAttempts >= MAX_CONNECT_ATTEMPTS) {
-      connectAttempts = Math.max(0, MAX_CONNECT_ATTEMPTS - 2);
-    }
-
     const activity = buildActivity(body);
     const key = activityKey(activity, body.isPaused);
-    if (key === lastPayloadKey && ready) {
+    if (key === lastPayloadKey && ready && rpc) {
       return { success: true };
     }
 
+    log('setting presence:', activity.details, '/', activity.state);
     const ok = await applyActivity(activity);
     if (!ok) {
-      scheduleConnectRetry();
-      return { success: false, error: 'Discord not available' };
+      return { success: false, error: 'Discord/Vesktop RPC not available' };
     }
 
     lastPayloadKey = key;
-    console.log(
-      '[kstream-desktop] Discord presence set:',
-      activity.details,
-      '/',
-      activity.state,
-    );
+    log('presence set ok');
     return { success: true };
   } catch (err) {
-    console.warn(
-      '[kstream-desktop] Discord presence update failed:',
-      err?.message || err,
-    );
-    destroyClient();
+    log('presence update failed:', err?.message || err);
+    destroyClient('setActivity-failed');
     lastPayloadKey = '';
-    scheduleConnectRetry();
+    // One immediate retry for transient Vesktop pipe issues
+    try {
+      const activity = buildActivity(body);
+      const ok = await applyActivity(activity);
+      if (ok) {
+        lastPayloadKey = activityKey(activity, body.isPaused);
+        log('presence set ok after retry');
+        return { success: true };
+      }
+    } catch (retryErr) {
+      log('retry failed:', retryErr?.message || retryErr);
+    }
     return { success: false, error: err?.message || String(err) };
   }
 }
 
-async function flushPending() {
-  if (!pendingBody) return;
-  const body = pendingBody;
-  lastPayloadKey = '';
-  await updateDiscordPresence(body);
-}
-
-/**
- * No-op at boot on purpose. Discord only connects when the player sends metadata.
- * Kept so main.js can call it safely.
- */
-function startDiscordPresence() {
-  // intentionally empty — lazy connect via updateDiscordPresence
+/** Optional boot hook — kept for main.js compatibility. */
+function startDiscordPresence(userDataPath) {
+  if (userDataPath) setLogPath(userDataPath);
 }
 
 function shutdownDiscordPresence() {
-  clearRetryTimer();
-  clearIdleDisconnect();
   pendingBody = null;
   lastPayloadKey = '';
-  destroyClient();
+  destroyClient('shutdown');
 }
 
 module.exports = {
@@ -362,4 +267,5 @@ module.exports = {
   updateDiscordPresence,
   startDiscordPresence,
   shutdownDiscordPresence,
+  setLogPath,
 };
