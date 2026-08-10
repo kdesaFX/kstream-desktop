@@ -2,21 +2,23 @@
 
 /**
  * Discord Rich Presence for kstream desktop.
- * Uses raw SET_ACTIVITY so Watching (type 3) is actually sent —
- * discord-rpc's setActivity() drops the type field.
+ * Crunchyroll-style layout while watching:
+ *   large image = poster, small image = kstream logo
+ *   details = title, state = episode + season/episode, timestamps = elapsed
  *
- * Buttons: Discord only shows them to OTHER users, never on your own profile.
+ * Buttons only show to OTHER users (Discord limitation).
  */
 const fs = require('fs');
 const path = require('path');
 
 const DISCORD_CLIENT_ID = '1536251834203770941';
-const LOGO_ASSET = process.env.KSTREAM_DISCORD_ASSET || '';
+/** Upload Rich Presence art named "kstream" in the Discord developer portal. */
+const LOGO_ASSET = process.env.KSTREAM_DISCORD_ASSET || 'kstream';
 const WATCH_URL = 'https://kdesa.stream';
 
 const PRESENCE_BUTTONS = [
   {
-    label: 'Watch on kstream',
+    label: 'Watch now on kstream',
     url: WATCH_URL,
   },
 ];
@@ -26,6 +28,20 @@ function withButtons(activity) {
     ...activity,
     buttons: PRESENCE_BUTTONS,
   };
+}
+
+function isHttpUrl(value) {
+  return typeof value === 'string' && /^https?:\/\//i.test(value.trim());
+}
+
+function normalizePosterUrl(poster) {
+  if (!isHttpUrl(poster)) return null;
+  return poster
+    .trim()
+    .replace(
+      /image\.tmdb\.org\/t\/p\/(?:original|w\d+)/i,
+      'image.tmdb.org/t/p/w500',
+    );
 }
 
 let rpc = null;
@@ -173,12 +189,19 @@ async function ensureClient() {
 }
 
 function buildIdleActivity() {
-  return withButtons({
+  const activity = withButtons({
     type: 3,
     details: 'Browsing',
     state: 'Looking for something to watch',
     instance: false,
   });
+  if (LOGO_ASSET) {
+    activity.assets = {
+      large_image: LOGO_ASSET,
+      large_text: 'kstream',
+    };
+  }
+  return activity;
 }
 
 function buildActivityPayload(body) {
@@ -193,34 +216,54 @@ function buildActivityPayload(body) {
     Number.isFinite(episodeNumber) &&
     seasonNumber > 0 &&
     episodeNumber > 0;
+  const isPaused = Boolean(body.isPaused);
 
+  // Crunchyroll-style text beside the poster:
+  //   details → show/movie title
+  //   state   → episode title, then "Season X, Episode Y"
+  //   timestamps → elapsed
   let state;
   if (isShow) {
-    const epBit = `S${seasonNumber} E${episodeNumber}`;
-    state = episodeTitle ? `${epBit}: ${episodeTitle}` : epBit;
+    const seasonLine = `Season ${seasonNumber}, Episode ${episodeNumber}`;
+    if (episodeTitle) {
+      // Newline → two lines under the title when Discord renders it
+      state = `${episodeTitle.slice(0, 100)}\n${seasonLine}`.slice(0, 128);
+    } else {
+      state = seasonLine;
+    }
+    if (isPaused) state = `${state.slice(0, 110)} · Paused`.slice(0, 128);
   } else {
-    state = body.isPaused ? 'Paused' : 'Watching';
+    state = isPaused ? 'Paused' : 'Watching';
   }
-  if (body.isPaused && isShow) state = `${state} · Paused`;
 
   const activity = {
     type: 3,
     details: title.slice(0, 128),
-    state: state.slice(0, 128),
+    state: String(state).slice(0, 128),
     instance: false,
   };
 
-  if (!body.isPaused && typeof body.startTimestamp === 'number') {
+  if (!isPaused && typeof body.startTimestamp === 'number') {
     activity.timestamps = {
       start: Math.round(body.startTimestamp),
     };
   }
 
+  const poster = normalizePosterUrl(body.poster);
+  const assets = {};
+  if (poster) {
+    assets.large_image = poster;
+    assets.large_text = (episodeTitle || title).slice(0, 128);
+  } else if (LOGO_ASSET) {
+    assets.large_image = LOGO_ASSET;
+    assets.large_text = title.slice(0, 128);
+  }
   if (LOGO_ASSET) {
-    activity.assets = {
-      large_image: LOGO_ASSET,
-      large_text: title.slice(0, 128),
-    };
+    assets.small_image = LOGO_ASSET;
+    assets.small_text = 'kstream';
+  }
+  if (Object.keys(assets).length > 0) {
+    activity.assets = assets;
   }
 
   return withButtons(activity);
@@ -231,6 +274,7 @@ function activityKey(activity, isPaused) {
     d: activity.details,
     s: activity.state,
     p: Boolean(isPaused),
+    i: activity.assets?.large_image || '',
     t: activity.timestamps?.start
       ? Math.floor(activity.timestamps.start / 15000)
       : 0,
@@ -247,17 +291,40 @@ async function applyActivity(activity) {
       pid,
       activity,
     });
-    log('SET_ACTIVITY ok pid=', String(pid), 'type=', String(activity.type));
+    log(
+      'SET_ACTIVITY ok',
+      activity.details,
+      '/',
+      activity.state?.replace(/\n/g, ' | '),
+      activity.assets?.large_image ? 'poster' : 'no-poster',
+    );
     return true;
   } catch (err) {
-    if (activity.buttons) {
-      const { buttons, ...bare } = activity;
-      log(
-        'SET_ACTIVITY with buttons failed, retrying bare:',
-        err?.message || err,
-      );
-      await client.request('SET_ACTIVITY', { pid, activity: bare });
-      log('SET_ACTIVITY ok (no buttons)');
+    // Retry without buttons, then without external poster if needed
+    let next = { ...activity };
+    if (next.buttons) {
+      delete next.buttons;
+      log('retry without buttons:', err?.message || err);
+      try {
+        await client.request('SET_ACTIVITY', { pid, activity: next });
+        log('SET_ACTIVITY ok (no buttons)');
+        return true;
+      } catch (err2) {
+        err = err2;
+      }
+    }
+    if (next.assets?.large_image && isHttpUrl(next.assets.large_image)) {
+      const assets = { ...next.assets };
+      if (LOGO_ASSET) {
+        assets.large_image = LOGO_ASSET;
+      } else {
+        delete assets.large_image;
+        delete assets.large_text;
+      }
+      next = { ...next, assets };
+      log('retry without external poster:', err?.message || err);
+      await client.request('SET_ACTIVITY', { pid, activity: next });
+      log('SET_ACTIVITY ok (logo only)');
       return true;
     }
     throw err;
@@ -301,7 +368,7 @@ async function updateDiscordPresence(body) {
       return { success: true };
     }
 
-    log('setting presence:', activity.details, '/', activity.state);
+    log('setting presence:', activity.details, '/', activity.state?.replace(/\n/g, ' | '));
     const ok = await applyActivity(activity);
     if (!ok) {
       scheduleReconnect();
@@ -322,7 +389,6 @@ async function updateDiscordPresence(body) {
 
 function startWatchdog() {
   if (watchdogTimer) return;
-  // If Discord was restarted while kstream stayed open, reconnect + re-apply
   watchdogTimer = setInterval(() => {
     if (ready && rpc) return;
     scheduleReconnect(500);
