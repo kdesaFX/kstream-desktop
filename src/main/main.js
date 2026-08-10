@@ -58,12 +58,14 @@ const SETUP_PRELOAD = path.join(__dirname, '..', 'preload', 'setup-preload.js');
 const WELCOME_HTML = path.join(__dirname, '..', 'renderer', 'welcome', 'index.html');
 
 // Production site (custom domain). Override with KSTREAM_URL if needed.
+// Use apex — www was dropped during the Cloudflare cutover and NXDOMAINs.
 const DEFAULT_STREAM_URL =
-  process.env.KSTREAM_URL || 'https://www.kdesa.stream';
+  process.env.KSTREAM_URL || 'https://kdesa.stream';
 const LEGACY_STREAM_HOSTS = new Set([
   'kstream.lol',
   'www.kstream.lol',
   'kstream-one.vercel.app',
+  'www.kdesa.stream',
 ]);
 
 const store = new SimpleStore({

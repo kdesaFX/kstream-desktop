@@ -16,7 +16,7 @@ const WATCH_URL = 'https://kdesa.stream';
 /** Small badge on the poster (Crunchyroll-style). External URL — no portal upload needed. */
 const LOGO_IMAGE_URL =
   process.env.KSTREAM_DISCORD_LOGO_URL ||
-  'https://www.kdesa.stream/apple-touch-icon.png';
+  'https://kdesa.stream/apple-touch-icon.png';
 /** Optional portal asset key; only used if set (external URL preferred). */
 const LOGO_ASSET = (process.env.KSTREAM_DISCORD_ASSET || '').trim();
 
