@@ -2,36 +2,19 @@
 
 /**
  * Discord Rich Presence for kstream desktop.
- * Crunchyroll-style layout while watching:
- *   large image = poster, small image = kstream logo
- *   details = title, state = episode + season/episode, timestamps = elapsed
  *
- * Buttons only show to OTHER users (Discord limitation).
+ * Keep this simple: one IPC connection (never probe multiple pipes with the
+ * same app id — Discord drops the first session). Prefer real Discord over
+ * Vesktop arRPC. Text + optional poster URL; no uploaded asset keys required.
  */
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
 
 const DISCORD_CLIENT_ID = '1536251834203770941';
-/**
- * Optional portal art asset key for the small kstream badge.
- * Leave empty until you upload an asset named "kstream" — a missing key can
- * hide the entire Rich Presence card.
- */
-const LOGO_ASSET = (process.env.KSTREAM_DISCORD_ASSET || '').trim();
 const WATCH_URL = 'https://kdesa.stream';
+const LOGO_ASSET = (process.env.KSTREAM_DISCORD_ASSET || '').trim();
 
-const PRESENCE_BUTTONS = [
-  {
-    label: 'Watch now on kstream',
-    url: WATCH_URL,
-  },
-];
-
-/**
- * Vesktop's arRPC usually binds discord-ipc-0 and steals Rich Presence from
- * the real Discord client. Skip that many pipes when reconnecting.
- */
 let ipcPipeSkip = 0;
 const realCreateConnection = net.createConnection.bind(net);
 net.createConnection = function patchedCreateConnection(target, ...rest) {
@@ -41,8 +24,7 @@ net.createConnection = function patchedCreateConnection(target, ...rest) {
     ipcPipeSkip > 0
   ) {
     target = target.replace(/discord-ipc-(\d+)/, (_, id) => {
-      const next = Number(id) + ipcPipeSkip;
-      return `discord-ipc-${next}`;
+      return `discord-ipc-${Number(id) + ipcPipeSkip}`;
     });
   } else if (
     target &&
@@ -54,20 +36,12 @@ net.createConnection = function patchedCreateConnection(target, ...rest) {
     target = {
       ...target,
       path: target.path.replace(/discord-ipc-(\d+)/, (_, id) => {
-        const next = Number(id) + ipcPipeSkip;
-        return `discord-ipc-${next}`;
+        return `discord-ipc-${Number(id) + ipcPipeSkip}`;
       }),
     };
   }
   return realCreateConnection(target, ...rest);
 };
-
-function withButtons(activity) {
-  return {
-    ...activity,
-    buttons: PRESENCE_BUTTONS,
-  };
-}
 
 function isHttpUrl(value) {
   return typeof value === 'string' && /^https?:\/\//i.test(value.trim());
@@ -92,6 +66,7 @@ let registered = false;
 let logPath = null;
 let watchdogTimer = null;
 let reconnectTimer = null;
+let refreshTimer = null;
 
 function setLogPath(userDataPath) {
   try {
@@ -165,7 +140,7 @@ function attachClientGuards(client) {
   });
 
   client.on('disconnected', () => {
-    log('RPC disconnected (Discord likely restarted)');
+    log('RPC disconnected');
     ready = false;
     if (rpc === client) rpc = null;
     scheduleReconnect(1500);
@@ -206,20 +181,10 @@ async function loginOnce() {
   return client;
 }
 
-function clientIdentity(client) {
-  const who = (client?.user?.username || '').toString();
-  const globalName = (client?.user?.global_name || '').toString();
-  return { who, globalName };
-}
-
-function scoreClient(identity) {
-  const { who, globalName } = identity;
-  const blob = `${who} ${globalName}`.toLowerCase();
-  if (blob.includes('arrpc')) return -100;
-  if (blob.includes('kdesa')) return 100;
-  return 1;
-}
-
+/**
+ * Connect to ONE pipe only. Probing multiple pipes with the same application
+ * id makes Discord drop the first session — that was killing visible presence.
+ */
 async function ensureClient() {
   if (ready && rpc) return rpc;
   if (connectPromise) return connectPromise;
@@ -228,19 +193,16 @@ async function ensureClient() {
     try {
       if (rpc) destroyClient('reconnect');
 
-      const found = [];
       for (let skip = 0; skip < 5; skip += 1) {
         ipcPipeSkip = skip;
         try {
           const client = await loginOnce();
-          const identity = clientIdentity(client);
-          log(
-            'found IPC',
-            `skip=${skip}`,
-            identity.who || '?',
-            identity.globalName ? `(${identity.globalName})` : '',
-          );
-          if (identity.who.toLowerCase() === 'arrpc') {
+          const who = (client.user?.username || '').toString();
+          const globalName = (client.user?.global_name || '').toString();
+          log('connected as', who || '?', globalName ? `(${globalName})` : '', `ipc=${skip}`);
+
+          if (who.toLowerCase() === 'arrpc') {
+            log('skipping arRPC, trying next pipe');
             try {
               client.destroy();
             } catch {
@@ -248,38 +210,18 @@ async function ensureClient() {
             }
             continue;
           }
-          found.push({ client, skip, identity, score: scoreClient(identity) });
+
+          rpc = client;
+          ready = true;
+          clearReconnectTimer();
+          return rpc;
         } catch (err) {
-          log(`ipc skip=${skip} failed:`, err?.message || err);
+          log(`ipc=${skip} failed:`, err?.message || err);
         }
       }
 
-      if (found.length === 0) {
-        log('unavailable: no Discord IPC pipe found');
-        return null;
-      }
-
-      found.sort((a, b) => b.score - a.score);
-      const best = found[0];
-      for (const entry of found.slice(1)) {
-        try {
-          entry.client.destroy();
-        } catch {
-          // ignore
-        }
-      }
-
-      rpc = best.client;
-      ready = true;
-      ipcPipeSkip = best.skip;
-      clearReconnectTimer();
-      log(
-        'using Discord session',
-        best.identity.who,
-        best.identity.globalName ? `(${best.identity.globalName})` : '',
-        `ipc skip=${best.skip}`,
-      );
-      return rpc;
+      log('unavailable: no Discord IPC pipe found');
+      return null;
     } finally {
       connectPromise = null;
     }
@@ -289,13 +231,13 @@ async function ensureClient() {
 }
 
 function buildIdleActivity() {
-  // Text-only idle status — no asset keys (missing keys can hide the card)
-  return withButtons({
+  return {
     type: 3,
     details: 'Browsing',
     state: 'Looking for something to watch',
     instance: false,
-  });
+    buttons: [{ label: 'Watch now on kstream', url: WATCH_URL }],
+  };
 }
 
 function buildActivityPayload(body) {
@@ -312,20 +254,12 @@ function buildActivityPayload(body) {
     episodeNumber > 0;
   const isPaused = Boolean(body.isPaused);
 
-  // Crunchyroll-style text beside the poster:
-  //   details → show/movie title
-  //   state   → episode title, then "Season X, Episode Y"
-  //   timestamps → elapsed
   let state;
   if (isShow) {
     const seasonLine = `Season ${seasonNumber}, Episode ${episodeNumber}`;
-    if (episodeTitle) {
-      // Keep both lines visible without relying on \n (some clients strip it)
-      const ep = episodeTitle.slice(0, 80);
-      state = `${ep} — ${seasonLine}`.slice(0, 128);
-    } else {
-      state = seasonLine;
-    }
+    state = episodeTitle
+      ? `${episodeTitle.slice(0, 80)} — ${seasonLine}`.slice(0, 128)
+      : seasonLine;
     if (isPaused) state = `${state.slice(0, 110)} · Paused`.slice(0, 128);
   } else {
     state = isPaused ? 'Paused' : 'Watching';
@@ -336,30 +270,27 @@ function buildActivityPayload(body) {
     details: title.slice(0, 128),
     state: String(state).slice(0, 128),
     instance: false,
+    buttons: [{ label: 'Watch now on kstream', url: WATCH_URL }],
   };
 
   if (!isPaused && typeof body.startTimestamp === 'number') {
-    activity.timestamps = {
-      start: Math.round(body.startTimestamp),
-    };
+    activity.timestamps = { start: Math.round(body.startTimestamp) };
   }
 
+  // Poster is optional — if Discord rejects it we fall back to text-only
   const poster = normalizePosterUrl(body.poster);
-  const assets = {};
   if (poster) {
-    assets.large_image = poster;
-    assets.large_text = (episodeTitle || title).slice(0, 128);
-  }
-  // Only attach small logo when an uploaded asset key is configured
-  if (poster && LOGO_ASSET) {
-    assets.small_image = LOGO_ASSET;
-    assets.small_text = 'kstream';
-  }
-  if (Object.keys(assets).length > 0) {
-    activity.assets = assets;
+    activity.assets = {
+      large_image: poster,
+      large_text: (episodeTitle || title).slice(0, 128),
+    };
+    if (LOGO_ASSET) {
+      activity.assets.small_image = LOGO_ASSET;
+      activity.assets.small_text = 'kstream';
+    }
   }
 
-  return withButtons(activity);
+  return activity;
 }
 
 function activityKey(activity, isPaused) {
@@ -374,54 +305,51 @@ function activityKey(activity, isPaused) {
   });
 }
 
+async function setActivitySafe(client, activity) {
+  const pid = process.pid;
+  const attempts = [
+    activity,
+    // without buttons
+    (() => {
+      const a = { ...activity };
+      delete a.buttons;
+      return a;
+    })(),
+    // without assets
+    (() => {
+      const a = { ...activity };
+      delete a.buttons;
+      delete a.assets;
+      return a;
+    })(),
+  ];
+
+  let lastErr;
+  for (const attempt of attempts) {
+    try {
+      await client.request('SET_ACTIVITY', { pid, activity: attempt });
+      log(
+        'SET_ACTIVITY ok',
+        attempt.details,
+        '/',
+        attempt.state,
+        attempt.assets?.large_image ? 'poster' : 'text',
+        attempt.buttons ? 'btn' : 'nobtn',
+      );
+      return true;
+    } catch (err) {
+      lastErr = err;
+      log('SET_ACTIVITY retry:', err?.message || err);
+    }
+  }
+  throw lastErr || new Error('SET_ACTIVITY failed');
+}
+
 async function applyActivity(activity) {
   const client = await ensureClient();
   if (!client) return false;
-
-  const pid = process.pid;
-  try {
-    await client.request('SET_ACTIVITY', {
-      pid,
-      activity,
-    });
-    log(
-      'SET_ACTIVITY ok',
-      activity.details,
-      '/',
-      activity.state?.replace(/\n/g, ' | '),
-      activity.assets?.large_image ? 'poster' : 'no-poster',
-    );
-    return true;
-  } catch (err) {
-    // Retry without buttons, then without external poster if needed
-    let next = { ...activity };
-    if (next.buttons) {
-      delete next.buttons;
-      log('retry without buttons:', err?.message || err);
-      try {
-        await client.request('SET_ACTIVITY', { pid, activity: next });
-        log('SET_ACTIVITY ok (no buttons)');
-        return true;
-      } catch (err2) {
-        err = err2;
-      }
-    }
-    if (next.assets?.large_image && isHttpUrl(next.assets.large_image)) {
-      const assets = { ...next.assets };
-      if (LOGO_ASSET) {
-        assets.large_image = LOGO_ASSET;
-      } else {
-        delete assets.large_image;
-        delete assets.large_text;
-      }
-      next = { ...next, assets };
-      log('retry without external poster:', err?.message || err);
-      await client.request('SET_ACTIVITY', { pid, activity: next });
-      log('SET_ACTIVITY ok (logo only)');
-      return true;
-    }
-    throw err;
-  }
+  await setActivitySafe(client, activity);
+  return true;
 }
 
 async function flushPending(force = false) {
@@ -430,22 +358,14 @@ async function flushPending(force = false) {
   return updateDiscordPresence(body);
 }
 
-/**
- * @param {object|null} body
- * @returns {Promise<{ success: boolean, error?: string }>}
- */
 async function updateDiscordPresence(body) {
   try {
-    // Old web builds still send { clear: true } and wipe status. While the
-    // desktop app is open, treat clear as idle browsing instead.
+    // Old website builds send { clear: true } and used to wipe status.
     if (body && body.clear && !body.idle) {
-      log('ignoring clear from web — switching to idle browsing');
+      log('ignoring clear from web — keeping idle browsing');
       body = { idle: true };
     }
-
-    if (!body || body.idle) {
-      body = { idle: true };
-    }
+    if (!body || body.idle) body = { idle: true };
 
     pendingBody = body;
     const activity = buildActivityPayload(body);
@@ -454,7 +374,7 @@ async function updateDiscordPresence(body) {
       return { success: true };
     }
 
-    log('setting presence:', activity.details, '/', activity.state?.replace(/\n/g, ' | '));
+    log('setting presence:', activity.details, '/', activity.state);
     const ok = await applyActivity(activity);
     if (!ok) {
       scheduleReconnect();
@@ -462,7 +382,6 @@ async function updateDiscordPresence(body) {
     }
 
     lastPayloadKey = key;
-    log('presence set ok');
     return { success: true };
   } catch (err) {
     log('presence update failed:', err?.message || err);
@@ -479,6 +398,15 @@ function startWatchdog() {
     if (ready && rpc) return;
     scheduleReconnect(500);
   }, 8000);
+
+  // Re-assert presence periodically so Discord restarts / clears recover
+  if (!refreshTimer) {
+    refreshTimer = setInterval(() => {
+      if (!ready || !rpc || !pendingBody) return;
+      lastPayloadKey = '';
+      flushPending(true).catch(() => {});
+    }, 20000);
+  }
 }
 
 function startDiscordPresence(userDataPath) {
@@ -486,7 +414,7 @@ function startDiscordPresence(userDataPath) {
   startWatchdog();
   setTimeout(() => {
     updateDiscordPresence({ idle: true }).catch(() => {});
-  }, 1500);
+  }, 1200);
 }
 
 function shutdownDiscordPresence() {
@@ -494,6 +422,10 @@ function shutdownDiscordPresence() {
   if (watchdogTimer) {
     clearInterval(watchdogTimer);
     watchdogTimer = null;
+  }
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
   }
   pendingBody = null;
   lastPayloadKey = '';
