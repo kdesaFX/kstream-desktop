@@ -27,6 +27,7 @@
     "directories": {
       "output": "dist"
     },
+    "npmRebuild": false,
     "publish": {
       "provider": "github",
       "owner": "kdesaFX",
@@ -50,7 +51,6 @@
     ],
     "win": {
       "icon": "icon.ico",
-      "publisherName": "kstream",
       "target": [
         {
           "target": "portable",
