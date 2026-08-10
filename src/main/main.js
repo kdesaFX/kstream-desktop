@@ -341,11 +341,16 @@ function registerIpc() {
   });
 
   ipcMain.handle('updateMediaMetadata', async (_event, body) => {
+    const enriched = await enrichPresenceFromVideo(body || null);
     console.log(
       '[kstream-desktop] updateMediaMetadata',
-      body && body.clear ? 'clear' : body?.title || '(empty)',
+      enriched && enriched.clear
+        ? 'clear'
+        : enriched?.idle
+          ? 'idle'
+          : `${enriched?.title || '(empty)'} dur=${enriched?.durationSec || 0}s paused=${Boolean(enriched?.isPaused)}`,
     );
-    return updateDiscordPresence(body || null);
+    return updateDiscordPresence(enriched);
   });
   ipcMain.handle('openOfflineApp', async () => ({ success: true }));
 
@@ -362,6 +367,59 @@ function registerIpc() {
         'Unsigned builds may show a Windows SmartScreen warning — choose More info → Run anyway.',
     });
   });
+}
+
+/**
+ * Live site can lag behind desktop. Read the real <video> element so we always
+ * have duration/position for Discord's Spotify-style progress bar.
+ */
+async function enrichPresenceFromVideo(body) {
+  if (!body || body.idle || body.clear) return body;
+  if (!mainWindow || mainWindow.isDestroyed()) return body;
+
+  try {
+    const info = await mainWindow.webContents.executeJavaScript(
+      `(() => {
+        const v = document.querySelector('video');
+        if (!v) return null;
+        const duration = Number(v.duration);
+        const currentTime = Number(v.currentTime);
+        return {
+          durationSec:
+            Number.isFinite(duration) && duration > 0 && duration !== Infinity
+              ? duration
+              : 0,
+          currentTime: Number.isFinite(currentTime) ? Math.max(0, currentTime) : 0,
+          paused: Boolean(v.paused),
+        };
+      })()`,
+      true,
+    );
+    if (!info) return body;
+
+    const next = { ...body };
+    if (typeof info.paused === 'boolean') {
+      next.isPaused = info.paused;
+    }
+    if (info.durationSec > 0) {
+      next.durationSec = info.durationSec;
+      if (!next.isPaused) {
+        const start = Date.now() - Math.floor(info.currentTime * 1000);
+        next.startTimestamp = start;
+        next.endTimestamp = start + Math.floor(info.durationSec * 1000);
+      } else {
+        delete next.startTimestamp;
+        delete next.endTimestamp;
+      }
+    }
+    return next;
+  } catch (err) {
+    console.warn(
+      '[kstream-desktop] video enrich failed',
+      err?.message || err,
+    );
+    return body;
+  }
 }
 
 function setupAutoUpdater() {

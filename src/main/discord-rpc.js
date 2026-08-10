@@ -270,15 +270,23 @@ function buildActivityPayload(body) {
     state = isPaused ? 'Paused' : 'Watching';
   }
 
+  // Spotify-style progress bar only renders for Listening (type 2) with
+  // BOTH start and end timestamps. Watching (type 3) only shows a text timer.
+  const hasProgressBar =
+    !isPaused &&
+    ((typeof body.endTimestamp === 'number' &&
+      typeof body.startTimestamp === 'number' &&
+      body.endTimestamp > body.startTimestamp) ||
+      (typeof body.durationSec === 'number' && body.durationSec > 0));
+
   const activity = {
-    type: 3,
+    type: hasProgressBar ? 2 : 3,
     details: title.slice(0, 128),
     state: String(state).slice(0, 128),
     instance: false,
     buttons: [{ label: 'Watch now on kstream', url: WATCH_URL }],
   };
 
-  // Spotify-style progress bar: Discord shows a bar when BOTH start and end exist
   if (!isPaused) {
     let start =
       typeof body.startTimestamp === 'number'
@@ -324,6 +332,7 @@ function activityKey(activity, isPaused) {
   return JSON.stringify({
     d: activity.details,
     s: activity.state,
+    y: activity.type || 0,
     p: Boolean(isPaused),
     i: activity.assets?.large_image || '',
     t: activity.timestamps?.start
@@ -398,18 +407,19 @@ async function applyPendingPresence() {
     return { success: true };
   }
 
-  const ts = activity.timestamps;
-  log(
-    'setting presence:',
-    activity.details,
-    '/',
-    activity.state,
-    ts?.start && ts?.end
-      ? `bar ${Math.round((Date.now() - ts.start) / 1000)}s/${Math.round((ts.end - ts.start) / 1000)}s`
-      : ts?.start
-        ? 'elapsed-only'
-        : 'no-timer',
-  );
+    const ts = activity.timestamps;
+    log(
+      'setting presence:',
+      activity.details,
+      '/',
+      activity.state,
+      `type=${activity.type}`,
+      ts?.start && ts?.end
+        ? `bar ${Math.round((Date.now() - ts.start) / 1000)}s/${Math.round((ts.end - ts.start) / 1000)}s`
+        : ts?.start
+          ? 'elapsed-only'
+          : 'no-timer',
+    );
   const ok = await applyActivity(activity);
   if (!ok) {
     scheduleReconnect();
