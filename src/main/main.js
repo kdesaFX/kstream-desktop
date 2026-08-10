@@ -335,6 +335,9 @@ function registerSetupIpc() {
   });
 }
 
+let lastMediaBody = null;
+let pauseFreezeTimer = null;
+
 function registerIpc() {
   Object.entries(handlers).forEach(([channel, handler]) => {
     ipcMain.handle(channel, (_event, body) => handler(body));
@@ -342,6 +345,8 @@ function registerIpc() {
 
   ipcMain.handle('updateMediaMetadata', async (_event, body) => {
     const enriched = await enrichPresenceFromVideo(body || null);
+    lastMediaBody = enriched;
+    ensurePauseFreezeTimer();
     console.log(
       '[kstream-desktop] updateMediaMetadata',
       enriched && enriched.clear
@@ -367,6 +372,24 @@ function registerIpc() {
         'Unsigned builds may show a Windows SmartScreen warning — choose More info → Run anyway.',
     });
   });
+}
+
+/** Keep Discord's progress bar frozen while paused by re-anchoring timestamps. */
+function ensurePauseFreezeTimer() {
+  if (pauseFreezeTimer) return;
+  pauseFreezeTimer = setInterval(async () => {
+    const body = lastMediaBody;
+    if (!body || body.idle || body.clear || !body.isPaused || !body.title) {
+      return;
+    }
+    try {
+      const enriched = await enrichPresenceFromVideo(body);
+      lastMediaBody = enriched;
+      await updateDiscordPresence(enriched);
+    } catch {
+      // ignore
+    }
+  }, 3000);
 }
 
 /**
@@ -403,14 +426,11 @@ async function enrichPresenceFromVideo(body) {
     }
     if (info.durationSec > 0) {
       next.durationSec = info.durationSec;
-      if (!next.isPaused) {
-        const start = Date.now() - Math.floor(info.currentTime * 1000);
-        next.startTimestamp = start;
-        next.endTimestamp = start + Math.floor(info.durationSec * 1000);
-      } else {
-        delete next.startTimestamp;
-        delete next.endTimestamp;
-      }
+      // Always set start/end — while paused, re-anchoring to Date.now() freezes
+      // Discord's client-side bar at the current position (no "Paused" label).
+      const start = Date.now() - Math.floor(info.currentTime * 1000);
+      next.startTimestamp = start;
+      next.endTimestamp = start + Math.floor(info.durationSec * 1000);
     }
     return next;
   } catch (err) {

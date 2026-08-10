@@ -265,19 +265,33 @@ function buildActivityPayload(body) {
     state = episodeTitle
       ? `${episodeTitle.slice(0, 80)} — ${seasonLine}`.slice(0, 128)
       : seasonLine;
-    if (isPaused) state = `${state.slice(0, 110)} · Paused`.slice(0, 128);
   } else {
-    state = isPaused ? 'Paused' : 'Watching';
+    state = 'Watching';
   }
 
-  // Spotify-style progress bar only renders for Listening (type 2) with
-  // BOTH start and end timestamps. Watching (type 3) only shows a text timer.
-  const hasProgressBar =
-    !isPaused &&
-    ((typeof body.endTimestamp === 'number' &&
-      typeof body.startTimestamp === 'number' &&
-      body.endTimestamp > body.startTimestamp) ||
-      (typeof body.durationSec === 'number' && body.durationSec > 0));
+  // Resolve playback window (needed playing AND paused — paused freezes the bar)
+  let start =
+    typeof body.startTimestamp === 'number'
+      ? Math.round(body.startTimestamp)
+      : null;
+  let end =
+    typeof body.endTimestamp === 'number'
+      ? Math.round(body.endTimestamp)
+      : null;
+  const durationMs =
+    typeof body.durationSec === 'number' && body.durationSec > 0
+      ? Math.round(body.durationSec * 1000)
+      : start != null && end != null && end > start
+        ? end - start
+        : 0;
+
+  if (durationMs > 0) {
+    if (start == null) start = Date.now();
+    if (end == null || end <= start) end = start + durationMs;
+  }
+
+  // Spotify-style bar only renders for Listening (type 2) with BOTH timestamps.
+  const hasProgressBar = start != null && end != null && end > start;
 
   const activity = {
     type: hasProgressBar ? 2 : 3,
@@ -287,31 +301,12 @@ function buildActivityPayload(body) {
     buttons: [{ label: 'Watch now on kstream', url: WATCH_URL }],
   };
 
-  if (!isPaused) {
-    let start =
-      typeof body.startTimestamp === 'number'
-        ? Math.round(body.startTimestamp)
-        : Date.now();
-    const durationMs =
-      typeof body.durationSec === 'number' && body.durationSec > 0
-        ? Math.round(body.durationSec * 1000)
-        : typeof body.endTimestamp === 'number'
-          ? Math.round(body.endTimestamp) - start
-          : 0;
-
-    if (typeof body.endTimestamp === 'number' && body.endTimestamp > start) {
-      activity.timestamps = {
-        start,
-        end: Math.round(body.endTimestamp),
-      };
-    } else if (durationMs > 0) {
-      activity.timestamps = {
-        start,
-        end: start + durationMs,
-      };
-    } else {
-      activity.timestamps = { start };
-    }
+  if (hasProgressBar) {
+    activity.timestamps = { start, end };
+  } else if (!isPaused && start != null) {
+    activity.timestamps = { start };
+  } else if (!isPaused) {
+    activity.timestamps = { start: Date.now() };
   }
 
   // Poster large + kstream logo small (Crunchyroll layout)
