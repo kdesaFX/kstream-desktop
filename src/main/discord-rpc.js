@@ -271,58 +271,42 @@ function buildActivityPayload(body) {
   const title = (body.title || 'Something').trim();
   const isPaused = Boolean(body.isPaused);
   const releaseLabel = formatReleaseLabel(body);
-  // Listening card layout:
+  // Watching card layout:
   // 1) details = title
   // 2) state = month + year
-  // 3) no large_text (Discord shows it as a duplicate third line)
-  // 4) timestamps = progress bar (playing only)
-  const state = releaseLabel || 'Watching';
+  // 3) no large_text (avoids a duplicate third line)
+  // 4) timestamps.start = elapsed text timer while playing (pauses cleanly)
+  const state = releaseLabel || ' ';
 
   let start =
     typeof body.startTimestamp === 'number'
       ? Math.round(body.startTimestamp)
       : null;
-  let end =
-    typeof body.endTimestamp === 'number'
-      ? Math.round(body.endTimestamp)
-      : null;
   const durationMs =
     typeof body.durationSec === 'number' && body.durationSec > 0
       ? Math.round(body.durationSec * 1000)
-      : start != null && end != null && end > start
-        ? end - start
-        : 0;
+      : 0;
 
-  // Only build a progress window while playing. Paused must not invent
-  // timestamps from duration alone (that brings the rubber-band bar back).
-  if (!isPaused && durationMs > 0) {
-    if (start == null) start = Date.now();
-    if (end == null || end <= start) end = start + durationMs;
-  }
+  // Playing: elapsed timer from current position. Paused: no timestamps so
+  // Discord's timer actually stops (Watching text timers don't rubber-band).
   if (isPaused || body.clearTimestamps) {
     start = null;
-    end = null;
+  } else if (start == null) {
+    start = Date.now();
   }
 
-  // Spotify-style bar only while playing. Discord animates bars locally and
-  // throttles presence updates, so "freezing" via re-anchors rubber-bands.
-  const wantsBar = !isPaused && start != null && end != null && end > start;
-
   const activity = {
-    type: 2,
+    type: 3, // Watching kstream
     details: title.slice(0, 128),
     state: String(state).slice(0, 128),
     instance: false,
     buttons: [{ label: 'Watch now on kstream', url: WATCH_URL }],
   };
 
-  if (wantsBar) {
-    activity.timestamps = { start, end };
+  if (start != null) {
+    activity.timestamps = { start };
   }
-  // Paused: intentionally no timestamps (hides timeline, no rubber-banding).
 
-  // Poster + kstream logo. Omit large_text — Listening UI prints it as a
-  // third line and was duplicating the title under the date.
   const poster = normalizePosterUrl(body.poster);
   if (poster) {
     activity.assets = {
@@ -345,10 +329,7 @@ function activityKey(activity, isPaused) {
     t: activity.timestamps?.start
       ? Math.floor(activity.timestamps.start / 15000)
       : 0,
-    e: activity.timestamps?.end
-      ? Math.floor(activity.timestamps.end / 15000)
-      : 0,
-    bar: Boolean(activity.timestamps?.start && activity.timestamps?.end),
+    bar: false,
   });
 }
 
@@ -423,8 +404,8 @@ async function applyPendingPresence() {
     activity.state,
     `type=${activity.type}`,
     body.isPaused ? 'paused' : 'playing',
-    ts?.start && ts?.end
-      ? `bar ${Math.round((Date.now() - ts.start) / 1000)}s/${Math.round((ts.end - ts.start) / 1000)}s`
+    ts?.start
+      ? `elapsed ${Math.round((Date.now() - ts.start) / 1000)}s`
       : 'no-timer',
   );
   const ok = await applyActivity(activity);
