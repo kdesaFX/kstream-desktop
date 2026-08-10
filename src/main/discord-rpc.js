@@ -2,8 +2,8 @@
 
 /**
  * Discord Rich Presence for kstream desktop.
- * Works with Discord stable and Vesktop (arRPC).
- * Connects on first watch; stays connected for the app session.
+ * Uses raw SET_ACTIVITY so Watching (type 3) is actually sent —
+ * discord-rpc's setActivity() drops the type field.
  */
 const fs = require('fs');
 const path = require('path');
@@ -58,7 +58,6 @@ function destroyClient(reason) {
 
 function attachClientGuards(client) {
   client.on('error', (err) => {
-    // Vesktop/arRPC sometimes emits soft errors — do not tear down immediately
     log('RPC error (kept):', err?.message || String(err));
   });
 
@@ -123,7 +122,7 @@ async function ensureClient() {
   return connectPromise;
 }
 
-function buildActivity(body) {
+function buildActivityPayload(body) {
   const title = (body.title || 'Something').trim();
   const episodeTitle = (body.episodeTitle || '').trim();
   const seasonNumber = Number(body.seasonNumber);
@@ -143,21 +142,25 @@ function buildActivity(body) {
   }
   if (body.isPaused && isShow) state = `${state} · Paused`;
 
+  // Discord Activity object — include type explicitly (Watching = 3)
   const activity = {
+    type: 3,
     details: title.slice(0, 128),
     state: state.slice(0, 128),
     instance: false,
-    // Watching — Vesktop/arRPC may ignore type; still fine as Playing fallback
-    type: 3,
   };
 
-  if (LOGO_ASSET) {
-    activity.largeImageKey = LOGO_ASSET;
-    activity.largeImageText = title.slice(0, 128);
+  if (!body.isPaused && typeof body.startTimestamp === 'number') {
+    activity.timestamps = {
+      start: Math.round(body.startTimestamp),
+    };
   }
 
-  if (!body.isPaused && typeof body.startTimestamp === 'number') {
-    activity.startTimestamp = body.startTimestamp;
+  if (LOGO_ASSET) {
+    activity.assets = {
+      large_image: LOGO_ASSET,
+      large_text: title.slice(0, 128),
+    };
   }
 
   return activity;
@@ -168,31 +171,26 @@ function activityKey(activity, isPaused) {
     d: activity.details,
     s: activity.state,
     p: Boolean(isPaused),
-    t: activity.startTimestamp
-      ? Math.floor(activity.startTimestamp / 15000)
+    t: activity.timestamps?.start
+      ? Math.floor(activity.timestamps.start / 15000)
       : 0,
   });
 }
 
+/**
+ * Bypass discord-rpc setActivity() which silently drops `type`.
+ */
 async function applyActivity(activity) {
   const client = await ensureClient();
   if (!client) return false;
 
-  // Bare payload first — buttons/assets often break Vesktop/arRPC display
-  const bare = {
-    details: activity.details,
-    state: activity.state,
-    instance: false,
-    type: 3,
-  };
-  if (activity.startTimestamp) bare.startTimestamp = activity.startTimestamp;
-  if (activity.largeImageKey) {
-    bare.largeImageKey = activity.largeImageKey;
-    bare.largeImageText = activity.largeImageText;
-  }
-
-  await client.setActivity(bare);
-  return true;
+  const pid = process.pid;
+  const result = await client.request('SET_ACTIVITY', {
+    pid,
+    activity,
+  });
+  log('SET_ACTIVITY ok pid=', String(pid), 'type=', String(activity.type));
+  return result !== undefined || true;
 }
 
 /**
@@ -206,7 +204,7 @@ async function updateDiscordPresence(body) {
       lastPayloadKey = '';
       if (ready && rpc) {
         try {
-          await rpc.clearActivity();
+          await rpc.request('SET_ACTIVITY', { pid: process.pid });
           log('presence cleared');
         } catch (err) {
           log('clear failed:', err?.message || err);
@@ -216,7 +214,7 @@ async function updateDiscordPresence(body) {
     }
 
     pendingBody = body;
-    const activity = buildActivity(body);
+    const activity = buildActivityPayload(body);
     const key = activityKey(activity, body.isPaused);
     if (key === lastPayloadKey && ready && rpc) {
       return { success: true };
@@ -225,7 +223,7 @@ async function updateDiscordPresence(body) {
     log('setting presence:', activity.details, '/', activity.state);
     const ok = await applyActivity(activity);
     if (!ok) {
-      return { success: false, error: 'Discord/Vesktop RPC not available' };
+      return { success: false, error: 'Discord RPC not available' };
     }
 
     lastPayloadKey = key;
@@ -235,9 +233,8 @@ async function updateDiscordPresence(body) {
     log('presence update failed:', err?.message || err);
     destroyClient('setActivity-failed');
     lastPayloadKey = '';
-    // One immediate retry for transient Vesktop pipe issues
     try {
-      const activity = buildActivity(body);
+      const activity = buildActivityPayload(body);
       const ok = await applyActivity(activity);
       if (ok) {
         lastPayloadKey = activityKey(activity, body.isPaused);
@@ -251,7 +248,6 @@ async function updateDiscordPresence(body) {
   }
 }
 
-/** Optional boot hook — kept for main.js compatibility. */
 function startDiscordPresence(userDataPath) {
   if (userDataPath) setLogPath(userDataPath);
 }
