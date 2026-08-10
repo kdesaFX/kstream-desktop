@@ -282,7 +282,12 @@ function formatTimeRange(currentSec, durationSec) {
 }
 
 function buildActivityPayload(body) {
-  if (body?.idle) return buildIdleActivity();
+  if (body?.idle) {
+    const idle = buildIdleActivity();
+    // Must null timestamps or Discord keeps a previous green timer around
+    idle.timestamps = null;
+    return idle;
+  }
 
   const title = (body.title || 'Something').trim();
   const releaseLabel = formatReleaseLabel(body);
@@ -308,28 +313,28 @@ function buildActivityPayload(body) {
 
   const timeRange = formatTimeRange(currentSec, durationSec);
 
-  // Watching kstream — plain white text only (no Discord timestamp widget):
-  // 1) details = title
-  // 2) state line 1 = month + year
-  // 3) state line 2 = "0:05-20:01" (newline under the date)
-  let state = releaseLabel || '';
-  if (timeRange) {
-    state = state ? `${state}\n${timeRange}` : timeRange;
+  // Watching kstream — Discord strips "\n", so use a line-separator in details
+  // for title/date, and put the clock alone in state (its own white text line).
+  // timestamps:null clears the green TV timer left over from earlier updates.
+  let details = title;
+  if (releaseLabel) {
+    details = `${title}\u2028${releaseLabel}`;
   }
-  if (!state) state = ' ';
 
   const activity = {
     type: 3,
-    details: title.slice(0, 128),
-    state: state.slice(0, 128),
+    details: details.slice(0, 128),
+    state: (timeRange || ' ').slice(0, 128),
     instance: false,
     buttons: [{ label: 'Watch now on kstream', url: WATCH_URL }],
+    timestamps: null,
   };
 
   const poster = normalizePosterUrl(body.poster);
   if (poster) {
     activity.assets = {
       large_image: poster,
+      // Don't set large_text — on Watching it's hover-only and was confusing
       small_image: LOGO_ASSET || LOGO_IMAGE_URL,
       small_text: 'kstream',
     };
@@ -345,24 +350,56 @@ function activityKey(activity, isPaused) {
     y: activity.type || 0,
     p: Boolean(isPaused),
     i: activity.assets?.large_image || '',
+    ts: activity.timestamps == null ? 0 : 1,
   });
 }
 
 async function setActivitySafe(client, activity) {
   const pid = process.pid;
+  // Always include timestamps:null so Discord drops a leftover green timer
+  const base = {
+    ...activity,
+    timestamps:
+      activity.timestamps === undefined ? null : activity.timestamps,
+  };
+
+  // Hard-clear any previous timer before applying (Discord often keeps stale ones)
+  if (base.timestamps == null) {
+    try {
+      await client.request('SET_ACTIVITY', {
+        pid,
+        activity: {
+          type: 3,
+          details: base.details,
+          state: base.state,
+          assets: base.assets,
+          buttons: base.buttons,
+          instance: false,
+          timestamps: null,
+        },
+      });
+    } catch {
+      // continue to normal attempts
+    }
+  }
+
   const attempts = [
-    activity,
+    base,
     // without buttons
     (() => {
-      const a = { ...activity };
+      const a = { ...base };
       delete a.buttons;
       return a;
     })(),
-    // without assets
+    // without small image
     (() => {
-      const a = { ...activity };
+      const a = { ...base };
       delete a.buttons;
-      delete a.assets;
+      if (a.assets) {
+        a.assets = { ...a.assets };
+        delete a.assets.small_image;
+        delete a.assets.small_text;
+      }
       return a;
     })(),
   ];
@@ -376,6 +413,7 @@ async function setActivitySafe(client, activity) {
         attempt.details,
         '/',
         attempt.state,
+        attempt.timestamps == null ? 'ts-cleared' : 'ts-set',
         attempt.assets?.large_image ? 'poster' : 'text',
         attempt.buttons ? 'btn' : 'nobtn',
       );
