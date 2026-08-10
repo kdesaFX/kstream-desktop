@@ -56,10 +56,14 @@ const PRELOAD = path.join(__dirname, '..', 'preload', 'preload.js');
 const SETUP_PRELOAD = path.join(__dirname, '..', 'preload', 'setup-preload.js');
 const WELCOME_HTML = path.join(__dirname, '..', 'renderer', 'welcome', 'index.html');
 
-// Temporary production host until kdesa.stream is live on the VPS.
+// Production site (custom domain). Override with KSTREAM_URL if needed.
 const DEFAULT_STREAM_URL =
-  process.env.KSTREAM_URL || 'https://kstream-one.vercel.app';
-const LEGACY_STREAM_HOSTS = new Set(['kstream.lol', 'www.kstream.lol']);
+  process.env.KSTREAM_URL || 'https://www.kdesa.stream';
+const LEGACY_STREAM_HOSTS = new Set([
+  'kstream.lol',
+  'www.kstream.lol',
+  'kstream-one.vercel.app',
+]);
 
 const store = new SimpleStore({
   configName: 'user-preferences',

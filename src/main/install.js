@@ -199,7 +199,7 @@ function registerUninstallEntry(installDir, exePath) {
       UninstallString: `"${exePath}" --uninstall`,
       QuietUninstallString: `"${exePath}" --uninstall --quiet`,
       URLInfoAbout: 'https://github.com/kdesaFX/kstream-desktop',
-      HelpLink: 'https://kstream-one.vercel.app',
+      HelpLink: 'https://kdesa.stream',
     };
 
     const scriptLines = [
