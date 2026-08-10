@@ -180,29 +180,40 @@ async function loginOnce() {
     }
   }
 
-  if (rpc) destroyClient('reconnect');
-  rpc = new DiscordRPC.Client({ transport: 'ipc' });
-  attachClientGuards(rpc);
+  const client = new DiscordRPC.Client({ transport: 'ipc' });
+  attachClientGuards(client);
 
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error('Discord RPC connect timeout'));
-    }, 6000);
+    }, 5000);
 
-    rpc.once('ready', () => {
+    client.once('ready', () => {
       clearTimeout(timer);
-      ready = true;
-      clearReconnectTimer();
       resolve();
     });
 
-    rpc.login({ clientId: DISCORD_CLIENT_ID }).catch((err) => {
+    client.login({ clientId: DISCORD_CLIENT_ID }).catch((err) => {
       clearTimeout(timer);
       reject(err);
     });
   });
 
-  return rpc;
+  return client;
+}
+
+function clientIdentity(client) {
+  const who = (client?.user?.username || '').toString();
+  const globalName = (client?.user?.global_name || '').toString();
+  return { who, globalName };
+}
+
+function scoreClient(identity) {
+  const { who, globalName } = identity;
+  const blob = `${who} ${globalName}`.toLowerCase();
+  if (blob.includes('arrpc')) return -100;
+  if (blob.includes('kdesa')) return 100;
+  return 1;
 }
 
 async function ensureClient() {
@@ -211,35 +222,60 @@ async function ensureClient() {
 
   connectPromise = (async () => {
     try {
-      // Try up to 5 IPC pipes so we can skip Vesktop arRPC on ipc-0
+      if (rpc) destroyClient('reconnect');
+
+      const found = [];
       for (let skip = 0; skip < 5; skip += 1) {
         ipcPipeSkip = skip;
         try {
           const client = await loginOnce();
-          const who = (
-            client?.user?.username ||
-            client?.user?.global_name ||
-            client?.user?.id ||
-            'unknown'
-          ).toString();
-          log('connected as', who, `(ipc skip=${skip})`);
-
-          if (who.toLowerCase() === 'arrpc') {
-            log('skipping Vesktop arRPC — trying next Discord IPC pipe');
-            destroyClient('skip-arrpc');
+          const identity = clientIdentity(client);
+          log(
+            'found IPC',
+            `skip=${skip}`,
+            identity.who || '?',
+            identity.globalName ? `(${identity.globalName})` : '',
+          );
+          if (identity.who.toLowerCase() === 'arrpc') {
+            try {
+              client.destroy();
+            } catch {
+              // ignore
+            }
             continue;
           }
-
-          ipcPipeSkip = skip; // keep using this pipe for reconnects
-          return client;
+          found.push({ client, skip, identity, score: scoreClient(identity) });
         } catch (err) {
-          destroyClient('connect-failed');
           log(`ipc skip=${skip} failed:`, err?.message || err);
         }
       }
 
-      log('unavailable: no Discord IPC pipe found');
-      return null;
+      if (found.length === 0) {
+        log('unavailable: no Discord IPC pipe found');
+        return null;
+      }
+
+      found.sort((a, b) => b.score - a.score);
+      const best = found[0];
+      for (const entry of found.slice(1)) {
+        try {
+          entry.client.destroy();
+        } catch {
+          // ignore
+        }
+      }
+
+      rpc = best.client;
+      ready = true;
+      ipcPipeSkip = best.skip;
+      clearReconnectTimer();
+      log(
+        'using Discord session',
+        best.identity.who,
+        best.identity.globalName ? `(${best.identity.globalName})` : '',
+        `ipc skip=${best.skip}`,
+      );
+      return rpc;
     } finally {
       connectPromise = null;
     }
