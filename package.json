@@ -8,9 +8,10 @@
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --win",
-    "build:win": "electron-builder --win",
-    "dist": "electron-builder --win --publish=never"
+    "build": "electron-builder --config electron-builder.config.cjs --win",
+    "build:win": "electron-builder --config electron-builder.config.cjs --win",
+    "dist": "electron-builder --config electron-builder.config.cjs --win --publish=never",
+    "dist:signed": "electron-builder --config electron-builder.config.cjs --win --publish=never"
   },
   "dependencies": {
     "discord-rpc": "^4.0.1",
@@ -19,53 +20,5 @@
   "devDependencies": {
     "electron": "^39.3.0",
     "electron-builder": "^26.0.0"
-  },
-  "build": {
-    "appId": "com.kdesafx.kstream",
-    "productName": "kstream",
-    "copyright": "Copyright © 2026 kstream",
-    "directories": {
-      "output": "dist"
-    },
-    "npmRebuild": false,
-    "publish": {
-      "provider": "github",
-      "owner": "kdesaFX",
-      "repo": "kstream-desktop"
-    },
-    "files": [
-      "src/**/*",
-      "logo.png",
-      "icon.ico",
-      "package.json"
-    ],
-    "extraFiles": [
-      {
-        "from": "icon.ico",
-        "to": "icon.ico"
-      },
-      {
-        "from": "logo.png",
-        "to": "logo.png"
-      }
-    ],
-    "win": {
-      "icon": "icon.ico",
-      "target": [
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "requestedExecutionLevel": "asInvoker",
-      "executableName": "kstream"
-    },
-    "portable": {
-      "artifactName": "kstream-Setup.${ext}",
-      "requestExecutionLevel": "user",
-      "unpackDirName": "kstream-portable"
-    }
   }
 }

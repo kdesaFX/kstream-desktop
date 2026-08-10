@@ -16,6 +16,14 @@ jobs:
     runs-on: windows-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Azure Artifact Signing (optional — unsigned if secrets missing)
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_CODE_SIGNING_ENDPOINT: ${{ secrets.AZURE_CODE_SIGNING_ENDPOINT }}
+      AZURE_CODE_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_CODE_SIGNING_ACCOUNT_NAME }}
+      AZURE_CERT_PROFILE_NAME: ${{ secrets.AZURE_CERT_PROFILE_NAME }}
+      AZURE_PUBLISHER_NAME: ${{ secrets.AZURE_PUBLISHER_NAME }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,12 +33,26 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Install dependencies
-        run: npm install
+        run: pnpm install --config.block-exotic-subdeps=false
+
+      - name: Report signing mode
+        shell: pwsh
+        run: |
+          if ($env:AZURE_TENANT_ID -and $env:AZURE_CLIENT_ID -and $env:AZURE_CLIENT_SECRET -and $env:AZURE_CODE_SIGNING_ENDPOINT -and $env:AZURE_CODE_SIGNING_ACCOUNT_NAME -and $env:AZURE_CERT_PROFILE_NAME) {
+            Write-Host "Azure Artifact Signing secrets present — build will be SIGNED"
+          } else {
+            Write-Host "Azure signing secrets missing — build will be UNSIGNED (SmartScreen warning expected)"
+          }
 
       - name: Build Windows x64
         # Never publish from electron-builder (it creates draft releases when GH_TOKEN is set).
-        run: npm run dist
+        run: pnpm run dist
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -71,11 +93,9 @@ jobs:
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
           echo "Uploading assets to $TAG"
-          # Ensure release exists (tag push may not create one yet)
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --title "kstream $TAG" --notes "kstream desktop Core release $TAG" --latest
           else
-            # Publish if electron-builder (or a previous run) left a draft
             gh release edit "$TAG" --draft=false --latest || true
           fi
           for f in dist/*; do

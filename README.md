@@ -11,7 +11,7 @@ Windows desktop shell for [kstream](https://github.com/kdesaFX/kstream).
 - System tray + close-to-tray
 - Auto-update checks from GitHub Releases (best after install)
 
-**Not in Core yet:** offline downloads, code signing (SmartScreen may warn).
+**Not in Core yet:** offline downloads.
 
 ## First run
 
@@ -22,20 +22,22 @@ After you open `kstream-Setup.exe`:
 
 ## SmartScreen
 
-Unsigned builds can trigger Windows SmartScreen. Choose **More info → Run anyway**.
+Unsigned builds show Windows SmartScreen. Signed releases use **Azure Artifact Signing** — see [SIGNING.md](./SIGNING.md) for the one-time Azure + GitHub secrets setup.
+
+Until signing secrets are configured, choose **More info → Run anyway**.
 
 ## Development
 
 ```bash
-npm install
-npm start
+pnpm install --config.block-exotic-subdeps=false
+pnpm start
 ```
 
 Optional: point at a different site:
 
 ```bash
 set KSTREAM_URL=http://localhost:5173
-npm start
+pnpm start
 ```
 
 In dev, the welcome screen still appears until you pick a mode (`runMode` in settings). Install skips the file copy and just continues.
@@ -43,10 +45,10 @@ In dev, the welcome screen still appears until you pick a mode (`runMode` in set
 ## Build Windows package
 
 ```bash
-npm run dist
+pnpm run dist
 ```
 
-Output: `dist/kstream-Setup.exe`
+Output: `dist/kstream-Setup.exe` (signed automatically when Azure env vars / CI secrets are set).
 
 ## Releases
 
