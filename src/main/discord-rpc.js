@@ -13,8 +13,12 @@ const path = require('path');
 const net = require('net');
 
 const DISCORD_CLIENT_ID = '1536251834203770941';
-/** Upload Rich Presence art named "kstream" in the Discord developer portal. */
-const LOGO_ASSET = process.env.KSTREAM_DISCORD_ASSET || 'kstream';
+/**
+ * Optional portal art asset key for the small kstream badge.
+ * Leave empty until you upload an asset named "kstream" — a missing key can
+ * hide the entire Rich Presence card.
+ */
+const LOGO_ASSET = (process.env.KSTREAM_DISCORD_ASSET || '').trim();
 const WATCH_URL = 'https://kdesa.stream';
 
 const PRESENCE_BUTTONS = [
@@ -285,19 +289,13 @@ async function ensureClient() {
 }
 
 function buildIdleActivity() {
-  const activity = withButtons({
+  // Text-only idle status — no asset keys (missing keys can hide the card)
+  return withButtons({
     type: 3,
     details: 'Browsing',
     state: 'Looking for something to watch',
     instance: false,
   });
-  if (LOGO_ASSET) {
-    activity.assets = {
-      large_image: LOGO_ASSET,
-      large_text: 'kstream',
-    };
-  }
-  return activity;
 }
 
 function buildActivityPayload(body) {
@@ -351,11 +349,9 @@ function buildActivityPayload(body) {
   if (poster) {
     assets.large_image = poster;
     assets.large_text = (episodeTitle || title).slice(0, 128);
-  } else if (LOGO_ASSET) {
-    assets.large_image = LOGO_ASSET;
-    assets.large_text = title.slice(0, 128);
   }
-  if (LOGO_ASSET) {
+  // Only attach small logo when an uploaded asset key is configured
+  if (poster && LOGO_ASSET) {
     assets.small_image = LOGO_ASSET;
     assets.small_text = 'kstream';
   }
