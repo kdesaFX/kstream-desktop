@@ -26,6 +26,7 @@ const {
 } = require('./install');
 const {
   updateDiscordPresence,
+  startDiscordPresence,
   shutdownDiscordPresence,
 } = require('./discord-rpc');
 
@@ -269,6 +270,7 @@ function openAppAfterSetup() {
   }
   createMainWindow();
   setupAutoUpdater();
+  startDiscordPresence();
 }
 
 function registerSetupIpc() {
@@ -317,9 +319,13 @@ function registerIpc() {
     ipcMain.handle(channel, (_event, body) => handler(body));
   });
 
-  ipcMain.handle('updateMediaMetadata', async (_event, body) =>
-    updateDiscordPresence(body || null),
-  );
+  ipcMain.handle('updateMediaMetadata', async (_event, body) => {
+    console.log(
+      '[kstream-desktop] updateMediaMetadata',
+      body && body.clear ? 'clear' : body?.title || '(empty)',
+    );
+    return updateDiscordPresence(body || null);
+  });
   ipcMain.handle('openOfflineApp', async () => ({ success: true }));
 
   ipcMain.on('open-settings', () => {
@@ -404,6 +410,7 @@ if (!gotLock) {
     } else {
       createMainWindow();
       setupAutoUpdater();
+      startDiscordPresence();
     }
 
     app.on('activate', () => {
