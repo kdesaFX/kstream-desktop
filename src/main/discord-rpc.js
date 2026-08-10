@@ -275,10 +275,9 @@ function buildActivityPayload(body) {
   // 1) details = title
   // 2) state = month + year
   // 3) no large_text (Discord shows it as a duplicate third line)
-  // 4) timestamps = progress bar
+  // 4) timestamps = progress bar (playing only)
   const state = releaseLabel || 'Watching';
 
-  // Resolve playback window (needed playing AND paused — paused freezes the bar)
   let start =
     typeof body.startTimestamp === 'number'
       ? Math.round(body.startTimestamp)
@@ -294,29 +293,33 @@ function buildActivityPayload(body) {
         ? end - start
         : 0;
 
-  if (durationMs > 0) {
+  // Only build a progress window while playing. Paused must not invent
+  // timestamps from duration alone (that brings the rubber-band bar back).
+  if (!isPaused && durationMs > 0) {
     if (start == null) start = Date.now();
     if (end == null || end <= start) end = start + durationMs;
   }
+  if (isPaused || body.clearTimestamps) {
+    start = null;
+    end = null;
+  }
 
-  // Spotify-style bar only renders for Listening (type 2) with BOTH timestamps.
-  const hasProgressBar = start != null && end != null && end > start;
+  // Spotify-style bar only while playing. Discord animates bars locally and
+  // throttles presence updates, so "freezing" via re-anchors rubber-bands.
+  const wantsBar = !isPaused && start != null && end != null && end > start;
 
   const activity = {
-    type: hasProgressBar ? 2 : 3,
+    type: 2,
     details: title.slice(0, 128),
     state: String(state).slice(0, 128),
     instance: false,
     buttons: [{ label: 'Watch now on kstream', url: WATCH_URL }],
   };
 
-  if (hasProgressBar) {
+  if (wantsBar) {
     activity.timestamps = { start, end };
-  } else if (!isPaused && start != null) {
-    activity.timestamps = { start };
-  } else if (!isPaused) {
-    activity.timestamps = { start: Date.now() };
   }
+  // Paused: intentionally no timestamps (hides timeline, no rubber-banding).
 
   // Poster + kstream logo. Omit large_text — Listening UI prints it as a
   // third line and was duplicating the title under the date.
@@ -339,14 +342,13 @@ function activityKey(activity, isPaused) {
     y: activity.type || 0,
     p: Boolean(isPaused),
     i: activity.assets?.large_image || '',
-    // While paused we re-anchor every second — bucket must be fine-grained
-    // or Discord keeps animating the bar between rare updates.
     t: activity.timestamps?.start
-      ? Math.floor(activity.timestamps.start / (isPaused ? 1000 : 15000))
+      ? Math.floor(activity.timestamps.start / 15000)
       : 0,
     e: activity.timestamps?.end
-      ? Math.floor(activity.timestamps.end / (isPaused ? 1000 : 15000))
+      ? Math.floor(activity.timestamps.end / 15000)
       : 0,
+    bar: Boolean(activity.timestamps?.start && activity.timestamps?.end),
   });
 }
 
@@ -409,11 +411,7 @@ async function applyPendingPresence() {
   const body = pendingBody || { idle: true };
   const activity = buildActivityPayload(body);
   const key = activityKey(activity, body.isPaused);
-  // Always push while paused — Discord animates the bar locally and only
-  // freezes if we keep re-anchoring start/end to "now - currentTime".
-  if (body.isPaused) {
-    lastPayloadKey = '';
-  } else if (key === lastPayloadKey && ready && rpc) {
+  if (key === lastPayloadKey && ready && rpc) {
     return { success: true };
   }
 
@@ -424,12 +422,10 @@ async function applyPendingPresence() {
     '/',
     activity.state,
     `type=${activity.type}`,
-    body.isPaused ? 'paused-freeze' : 'playing',
+    body.isPaused ? 'paused' : 'playing',
     ts?.start && ts?.end
       ? `bar ${Math.round((Date.now() - ts.start) / 1000)}s/${Math.round((ts.end - ts.start) / 1000)}s`
-      : ts?.start
-        ? 'elapsed-only'
-        : 'no-timer',
+      : 'no-timer',
   );
   const ok = await applyActivity(activity);
   if (!ok) {

@@ -336,7 +336,6 @@ function registerSetupIpc() {
 }
 
 let lastMediaBody = null;
-let pauseFreezeTimer = null;
 
 function registerIpc() {
   Object.entries(handlers).forEach(([channel, handler]) => {
@@ -346,14 +345,13 @@ function registerIpc() {
   ipcMain.handle('updateMediaMetadata', async (_event, body) => {
     const enriched = await enrichPresenceFromVideo(body || null);
     lastMediaBody = enriched;
-    ensurePauseFreezeTimer();
     console.log(
       '[kstream-desktop] updateMediaMetadata',
       enriched && enriched.clear
         ? 'clear'
         : enriched?.idle
           ? 'idle'
-          : `${enriched?.title || '(empty)'} dur=${enriched?.durationSec || 0}s paused=${Boolean(enriched?.isPaused)}`,
+          : `${enriched?.title || '(empty)'} dur=${enriched?.durationSec || 0}s paused=${Boolean(enriched?.isPaused)} date=${enriched?.releaseDate || enriched?.releaseYear || '-'}`,
     );
     return updateDiscordPresence(enriched);
   });
@@ -374,27 +372,9 @@ function registerIpc() {
   });
 }
 
-/** Keep Discord's progress bar frozen while paused by re-anchoring timestamps. */
-function ensurePauseFreezeTimer() {
-  if (pauseFreezeTimer) return;
-  pauseFreezeTimer = setInterval(async () => {
-    const body = lastMediaBody;
-    if (!body || body.idle || body.clear || !body.isPaused || !body.title) {
-      return;
-    }
-    try {
-      const enriched = await enrichPresenceFromVideo(body);
-      lastMediaBody = enriched;
-      await updateDiscordPresence(enriched);
-    } catch {
-      // ignore
-    }
-  }, 1000);
-}
-
 /**
- * Live site can lag behind desktop. Read the real <video> element so we always
- * have duration/position for Discord's Spotify-style progress bar.
+ * Live site can lag behind desktop. Read the real <video> element + window.meta
+ * so duration/position/year work even on older web builds.
  */
 async function enrichPresenceFromVideo(body) {
   if (!body || body.idle || body.clear) return body;
@@ -404,16 +384,25 @@ async function enrichPresenceFromVideo(body) {
     const info = await mainWindow.webContents.executeJavaScript(
       `(() => {
         const v = document.querySelector('video');
-        if (!v) return null;
-        const duration = Number(v.duration);
-        const currentTime = Number(v.currentTime);
+        const meta = window.meta && window.meta.player && window.meta.player.meta;
+        const duration = v ? Number(v.duration) : NaN;
+        const currentTime = v ? Number(v.currentTime) : NaN;
         return {
+          hasVideo: Boolean(v),
           durationSec:
             Number.isFinite(duration) && duration > 0 && duration !== Infinity
               ? duration
               : 0,
           currentTime: Number.isFinite(currentTime) ? Math.max(0, currentTime) : 0,
-          paused: Boolean(v.paused),
+          paused: v ? Boolean(v.paused) : null,
+          releaseYear:
+            meta && typeof meta.year === 'number' && meta.year > 0
+              ? meta.year
+              : null,
+          releaseDate:
+            meta && typeof meta.releaseDate === 'string' && meta.releaseDate
+              ? meta.releaseDate
+              : null,
         };
       })()`,
       true,
@@ -424,13 +413,28 @@ async function enrichPresenceFromVideo(body) {
     if (typeof info.paused === 'boolean') {
       next.isPaused = info.paused;
     }
+    if (info.releaseDate && !next.releaseDate) {
+      next.releaseDate = info.releaseDate;
+    }
+    if (info.releaseYear && !next.releaseYear) {
+      next.releaseYear = info.releaseYear;
+    }
+
     if (info.durationSec > 0) {
       next.durationSec = info.durationSec;
-      // Always set start/end — while paused, re-anchoring to Date.now() freezes
-      // Discord's client-side bar at the current position (no "Paused" label).
-      const start = Date.now() - Math.floor(info.currentTime * 1000);
-      next.startTimestamp = start;
-      next.endTimestamp = start + Math.floor(info.durationSec * 1000);
+      if (next.isPaused) {
+        // Discord animates Listening bars locally and throttles presence
+        // updates (~15s). Re-anchoring causes rubber-banding — drop the
+        // timeline while paused so it stays put.
+        delete next.startTimestamp;
+        delete next.endTimestamp;
+        next.clearTimestamps = true;
+      } else {
+        const start = Date.now() - Math.floor(info.currentTime * 1000);
+        next.startTimestamp = start;
+        next.endTimestamp = start + Math.floor(info.durationSec * 1000);
+        delete next.clearTimestamps;
+      }
     }
     return next;
   } catch (err) {
