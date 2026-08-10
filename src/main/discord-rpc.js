@@ -265,47 +265,66 @@ function formatReleaseLabel(body) {
   return '';
 }
 
+function formatClock(totalSec) {
+  const sec = Math.max(0, Math.floor(Number(totalSec) || 0));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function formatTimeRange(currentSec, durationSec) {
+  if (!(durationSec > 0)) return '';
+  return `${formatClock(currentSec)}-${formatClock(durationSec)}`;
+}
+
 function buildActivityPayload(body) {
   if (body?.idle) return buildIdleActivity();
 
   const title = (body.title || 'Something').trim();
-  const isPaused = Boolean(body.isPaused);
   const releaseLabel = formatReleaseLabel(body);
-  // Watching card layout:
-  // 1) details = title
-  // 2) state = month + year
-  // 3) no large_text (avoids a duplicate third line)
-  // 4) timestamps.start = elapsed text timer while playing (pauses cleanly)
-  const state = releaseLabel || ' ';
 
-  let start =
-    typeof body.startTimestamp === 'number'
-      ? Math.round(body.startTimestamp)
+  let currentSec =
+    typeof body.currentTimeSec === 'number' && body.currentTimeSec >= 0
+      ? body.currentTimeSec
       : null;
-  const durationMs =
+  const durationSec =
     typeof body.durationSec === 'number' && body.durationSec > 0
-      ? Math.round(body.durationSec * 1000)
+      ? body.durationSec
       : 0;
 
-  // Playing: elapsed timer from current position. Paused: no timestamps so
-  // Discord's timer actually stops (Watching text timers don't rubber-band).
-  if (isPaused || body.clearTimestamps) {
-    start = null;
-  } else if (start == null) {
-    start = Date.now();
+  if (
+    currentSec == null &&
+    typeof body.startTimestamp === 'number' &&
+    !body.isPaused &&
+    !body.clearTimestamps
+  ) {
+    currentSec = Math.max(0, (Date.now() - body.startTimestamp) / 1000);
   }
+  if (currentSec == null) currentSec = 0;
+
+  const timeRange = formatTimeRange(currentSec, durationSec);
+
+  // Watching kstream — plain white text only (no Discord timestamp widget):
+  // 1) details = title
+  // 2) state line 1 = month + year
+  // 3) state line 2 = "0:05-20:01" (newline under the date)
+  let state = releaseLabel || '';
+  if (timeRange) {
+    state = state ? `${state}\n${timeRange}` : timeRange;
+  }
+  if (!state) state = ' ';
 
   const activity = {
-    type: 3, // Watching kstream
+    type: 3,
     details: title.slice(0, 128),
-    state: String(state).slice(0, 128),
+    state: state.slice(0, 128),
     instance: false,
     buttons: [{ label: 'Watch now on kstream', url: WATCH_URL }],
   };
-
-  if (start != null) {
-    activity.timestamps = { start };
-  }
 
   const poster = normalizePosterUrl(body.poster);
   if (poster) {
@@ -326,10 +345,6 @@ function activityKey(activity, isPaused) {
     y: activity.type || 0,
     p: Boolean(isPaused),
     i: activity.assets?.large_image || '',
-    t: activity.timestamps?.start
-      ? Math.floor(activity.timestamps.start / 15000)
-      : 0,
-    bar: false,
   });
 }
 
@@ -396,17 +411,14 @@ async function applyPendingPresence() {
     return { success: true };
   }
 
-  const ts = activity.timestamps;
+  const statePreview = String(activity.state || '').replace(/\n/g, ' | ');
   log(
     'setting presence:',
     activity.details,
     '/',
-    activity.state,
+    statePreview,
     `type=${activity.type}`,
     body.isPaused ? 'paused' : 'playing',
-    ts?.start
-      ? `elapsed ${Math.round((Date.now() - ts.start) / 1000)}s`
-      : 'no-timer',
   );
   const ok = await applyActivity(activity);
   if (!ok) {

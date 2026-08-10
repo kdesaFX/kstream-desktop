@@ -338,6 +338,7 @@ function registerSetupIpc() {
 let lastMediaBody = null;
 /** @type {Map<string, { releaseDate?: string, releaseYear?: number }>} */
 const releaseDateCache = new Map();
+let clockTimer = null;
 
 function registerIpc() {
   Object.entries(handlers).forEach(([channel, handler]) => {
@@ -347,13 +348,14 @@ function registerIpc() {
   ipcMain.handle('updateMediaMetadata', async (_event, body) => {
     const enriched = await enrichPresenceFromVideo(body || null);
     lastMediaBody = enriched;
+    ensureClockTimer();
     console.log(
       '[kstream-desktop] updateMediaMetadata',
       enriched && enriched.clear
         ? 'clear'
         : enriched?.idle
           ? 'idle'
-          : `${enriched?.title || '(empty)'} dur=${enriched?.durationSec || 0}s paused=${Boolean(enriched?.isPaused)} date=${enriched?.releaseDate || enriched?.releaseYear || '-'}`,
+          : `${enriched?.title || '(empty)'} dur=${enriched?.durationSec || 0}s paused=${Boolean(enriched?.isPaused)} date=${enriched?.releaseDate || enriched?.releaseYear || '-'} clock=${formatClockPreview(enriched)}`,
     );
     return updateDiscordPresence(enriched);
   });
@@ -372,6 +374,32 @@ function registerIpc() {
         'Unsigned builds may show a Windows SmartScreen warning — choose More info → Run anyway.',
     });
   });
+}
+
+function formatClockPreview(body) {
+  if (!body || !(body.durationSec > 0)) return '-';
+  const cur =
+    typeof body.currentTimeSec === 'number' ? body.currentTimeSec : 0;
+  const a = Math.floor(cur);
+  const b = Math.floor(body.durationSec);
+  return `${a}s-${b}s`;
+}
+
+/** Keep the plain-text "0:05-20:01" clock fresh while playing. */
+function ensureClockTimer() {
+  if (clockTimer) return;
+  clockTimer = setInterval(async () => {
+    const body = lastMediaBody;
+    if (!body || body.idle || body.clear || !body.title) return;
+    if (body.isPaused) return; // frozen text — no need to spam
+    try {
+      const enriched = await enrichPresenceFromVideo(body);
+      lastMediaBody = enriched;
+      await updateDiscordPresence(enriched);
+    } catch {
+      // ignore
+    }
+  }, 5000);
 }
 
 /**
@@ -443,18 +471,14 @@ async function enrichPresenceFromVideo(body) {
       }
     }
 
-    if (info.durationSec > 0) {
-      next.durationSec = info.durationSec;
-      if (next.isPaused) {
-        delete next.startTimestamp;
-        delete next.endTimestamp;
-        next.clearTimestamps = true;
-      } else {
-        const start = Date.now() - Math.floor(info.currentTime * 1000);
-        next.startTimestamp = start;
-        next.endTimestamp = start + Math.floor(info.durationSec * 1000);
-        delete next.clearTimestamps;
-      }
+    if (info.durationSec > 0 || info.hasVideo) {
+      next.currentTimeSec = info.currentTime;
+      if (info.durationSec > 0) next.durationSec = info.durationSec;
+      // Never use Discord's built-in timestamp widget — we render "0:05-20:01"
+      // as plain text under the date instead.
+      delete next.startTimestamp;
+      delete next.endTimestamp;
+      next.clearTimestamps = true;
     }
     return next;
   } catch (err) {
