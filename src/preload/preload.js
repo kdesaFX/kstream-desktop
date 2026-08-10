@@ -7,6 +7,7 @@ const PUBLIC_CHANNELS = [
   'openPage',
   'updateMediaMetadata',
   'openOfflineApp',
+  'getDesktopAppInfo',
 ];
 
 async function invokeDesktop(name, body) {
@@ -83,14 +84,6 @@ contextBridge.exposeInMainWorld('desktopApi', {
   openOffline() {
     console.info('[kstream-desktop] Offline library is not available in Core v1.');
   },
-});
-
-contextBridge.exposeInMainWorld('__PSTREAM_OPEN_SETTINGS__', () => {
-  ipcRenderer.send('open-settings');
-});
-
-window.addEventListener('pstream-desktop-settings', () => {
-  ipcRenderer.send('open-settings');
 });
 
 console.log('[kstream-desktop] preload ready (direct IPC + relay)');

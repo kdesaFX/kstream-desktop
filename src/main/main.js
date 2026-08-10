@@ -23,6 +23,7 @@ const {
   launchInstalledAndExit,
   getSetupInfo,
   getInstallDir,
+  hasPortableMarker,
   resolveBrandIconPaths,
   ensureInstalledBranding,
   uninstallInstalled,
@@ -97,6 +98,14 @@ function migrateStreamUrl() {
 }
 
 migrateStreamUrl();
+
+function getRunModeLabel() {
+  const mode = store.get('runMode', null);
+  if (mode === 'installed' || mode === 'portable') return mode;
+  if (isRunningFromInstallDir()) return 'installed';
+  if (hasPortableMarker()) return 'portable';
+  return 'unknown';
+}
 
 function getStreamUrl() {
   return store.get('streamUrl', DEFAULT_STREAM_URL) || DEFAULT_STREAM_URL;
@@ -370,19 +379,12 @@ function registerIpc() {
   });
   ipcMain.handle('openOfflineApp', async () => ({ success: true }));
 
-  ipcMain.on('open-settings', () => {
-    dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      title: 'kstream',
-      message: 'App settings',
-      detail:
-        'Core loads your kstream site with native scraping.\n\n' +
-        `URL: ${getStreamUrl()}\n` +
-        `Mode: ${store.get('runMode', 'unknown')}\n` +
-        `Install folder: ${getInstallDir()}\n\n` +
-        'Unsigned builds may show a Windows SmartScreen warning. Choose More info, then Run anyway.',
-    });
-  });
+  ipcMain.handle('getDesktopAppInfo', async () => ({
+    streamUrl: getStreamUrl(),
+    runMode: getRunModeLabel(),
+    installDir: getInstallDir(),
+    version: app.getVersion(),
+  }));
 }
 
 /**
