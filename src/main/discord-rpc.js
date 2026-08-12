@@ -412,6 +412,30 @@ async function applyActivity(activity) {
   return true;
 }
 
+/**
+ * Discord sorts profile activities by created_at (newest first). Games like
+ * Valorant get a fresh created_at when they launch and jump above kstream.
+ * In-place SET_ACTIVITY does not bump that timestamp — clear then re-set does.
+ */
+async function clearActivity(client) {
+  try {
+    await client.request('SET_ACTIVITY', { pid: process.pid });
+  } catch (err) {
+    log('clear activity:', err?.message || err);
+  }
+}
+
+async function rebroadcastPresence() {
+  const client = rpc;
+  if (!client || !ready || !pendingBody) return;
+  await clearActivity(client);
+  // Let Discord drop the old activity so the next set gets a new created_at.
+  await new Promise((resolve) => setTimeout(resolve, 75));
+  if (rpc !== client || !ready) return;
+  lastPayloadKey = '';
+  await applyPendingPresence();
+}
+
 async function flushPending(force = false) {
   const body = pendingBody || { idle: true };
   if (force) lastPayloadKey = '';
@@ -489,11 +513,16 @@ function startWatchdog() {
   }, 8000);
 
   if (!refreshTimer) {
+    // Re-stamp often enough that a game launched after kstream cannot stay on top.
     refreshTimer = setInterval(() => {
       if (!ready || !rpc || !pendingBody) return;
-      lastPayloadKey = '';
-      flushPending(true).catch(() => {});
-    }, 20000);
+      presenceTail = presenceTail
+        .then(() => rebroadcastPresence())
+        .then(
+          () => undefined,
+          () => undefined,
+        );
+    }, 10000);
   }
 }
 
