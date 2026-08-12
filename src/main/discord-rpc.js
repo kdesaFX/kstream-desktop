@@ -270,9 +270,16 @@ async function ensureClient() {
   return connectPromise;
 }
 
+/**
+ * Use Playing (0), not Watching (3). Discord's profile lists detected games
+ * (Valorant, etc.) above Watching/Listening cards no matter how new they are.
+ * Playing puts kstream in the same bucket so a created_at re-stamp can sit on top.
+ */
+const ACTIVITY_TYPE_PLAYING = 0;
+
 function buildIdleActivity() {
   return {
-    type: 3,
+    type: ACTIVITY_TYPE_PLAYING,
     details: 'Browsing',
     state: 'Looking for something to watch',
     instance: false,
@@ -325,7 +332,7 @@ function buildActivityPayload(body) {
   const state = episodeLabel || formatReleaseLabel(body) || ' ';
 
   const activity = {
-    type: 3,
+    type: ACTIVITY_TYPE_PLAYING,
     details: title.slice(0, 128),
     state: String(state).slice(0, 128),
     instance: false,
@@ -522,7 +529,7 @@ function startWatchdog() {
           () => undefined,
           () => undefined,
         );
-    }, 10000);
+    }, 5000);
   }
 }
 
