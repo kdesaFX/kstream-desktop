@@ -40,7 +40,7 @@ jobs:
         with:
           repository: kdesaFX/providers
           ref: production
-          token: ${{ secrets.PROVIDERS_READ_TOKEN }}
+          ssh-key: ${{ secrets.PROVIDERS_DEPLOY_KEY }}
           path: providers-src
 
       - name: Setup Node.js
