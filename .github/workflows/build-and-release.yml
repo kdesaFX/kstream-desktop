@@ -35,6 +35,14 @@ jobs:
           ref: production
           path: kstream-web
 
+      - name: Checkout providers
+        uses: actions/checkout@v4
+        with:
+          repository: kdesaFX/providers
+          ref: production
+          token: ${{ secrets.PROVIDERS_READ_TOKEN }}
+          path: providers-src
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -45,9 +53,23 @@ jobs:
         with:
           version: 9
 
+      - name: Build providers and wire into kstream
+        shell: pwsh
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: '1'
+        run: |
+          Push-Location providers-src
+          pnpm install
+          pnpm run build
+          Pop-Location
+          node -e "const fs=require('fs'); const p='kstream-web/package.json'; const pkg=JSON.parse(fs.readFileSync(p,'utf8')); pkg.dependencies['@p-stream/providers']='file:../providers-src'; fs.writeFileSync(p, JSON.stringify(pkg,null,2)+'\n');"
+          if (Test-Path kstream-web/pnpm-lock.yaml) { Remove-Item -Force kstream-web/pnpm-lock.yaml }
+
       - name: Install kstream web dependencies
         working-directory: kstream-web
-        run: pnpm install --frozen-lockfile
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: '1'
+        run: pnpm install
 
       - name: Build kstream web
         working-directory: kstream-web
