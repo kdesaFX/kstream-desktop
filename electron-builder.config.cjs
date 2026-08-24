@@ -16,6 +16,9 @@
  *   AZURE_PUBLISHER_NAME          CN from your identity validation
  */
 
+const fs = require('fs');
+const path = require('path');
+
 const useAzureSigning = Boolean(
   process.env.AZURE_TENANT_ID &&
     process.env.AZURE_CLIENT_ID &&
@@ -32,6 +35,16 @@ if (useAzureSigning) {
 } else {
   console.log(
     '[kstream-desktop] Building UNSIGNED (set Azure signing env vars to enable SmartScreen-friendly builds)',
+  );
+}
+
+const webRoot = path.join(__dirname, 'resources', 'web');
+const hasBundledWeb = fs.existsSync(path.join(webRoot, 'index.html'));
+if (hasBundledWeb) {
+  console.log('[kstream-desktop] Bundling local web UI from resources/web');
+} else {
+  console.log(
+    '[kstream-desktop] No resources/web/index.html — build will fall back to remote URL at runtime',
   );
 }
 
@@ -54,6 +67,9 @@ module.exports = {
     { from: 'icon.ico', to: 'icon.ico' },
     { from: 'logo.png', to: 'logo.png' },
   ],
+  extraResources: hasBundledWeb
+    ? [{ from: 'resources/web', to: 'web', filter: ['**/*'] }]
+    : [],
   win: {
     icon: 'icon.ico',
     target: [

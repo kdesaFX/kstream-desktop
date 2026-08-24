@@ -35,6 +35,7 @@ const {
   shutdownDiscordPresence,
   setLogPath,
 } = require('./discord-rpc');
+const { resolveWebRoot, startLocalServer } = require('./local-server');
 
 // Must run before userData / store is touched.
 configurePortableUserData();
@@ -57,22 +58,22 @@ const PRELOAD = path.join(__dirname, '..', 'preload', 'preload.js');
 const SETUP_PRELOAD = path.join(__dirname, '..', 'preload', 'setup-preload.js');
 const WELCOME_HTML = path.join(__dirname, '..', 'renderer', 'welcome', 'index.html');
 
-// Production site (custom domain). Override with KSTREAM_URL if needed.
-// Use apex — www was dropped during the Cloudflare cutover and NXDOMAINs.
-const DEFAULT_STREAM_URL =
-  process.env.KSTREAM_URL || 'https://kdesa.stream';
+// Remote fallback when no bundled web UI is present. Override with KSTREAM_URL.
+const REMOTE_STREAM_URL = 'https://kdesa.stream';
+const ENV_STREAM_URL = process.env.KSTREAM_URL || null;
 const LEGACY_STREAM_HOSTS = new Set([
   'kstream.lol',
   'www.kstream.lol',
   'kstream-one.vercel.app',
   'www.kdesa.stream',
+  'kdesa.stream',
 ]);
 
 const store = new SimpleStore({
   configName: 'user-preferences',
   defaults: {
     windowBounds: { width: 1280, height: 800 },
-    streamUrl: DEFAULT_STREAM_URL,
+    streamUrl: REMOTE_STREAM_URL,
     closeToTray: true,
     runMode: null,
   },
@@ -82,35 +83,73 @@ let mainWindow = null;
 let tray = null;
 let isQuitting = false;
 let showingSetup = false;
+/** @type {{ origin: string, close: () => Promise<void> } | null} */
+let localServer = null;
+let defaultStreamUrl = ENV_STREAM_URL || REMOTE_STREAM_URL;
 
-function migrateStreamUrl() {
-  const current = store.get('streamUrl', DEFAULT_STREAM_URL);
-  if (!current || typeof current !== 'string') {
-    store.set('streamUrl', DEFAULT_STREAM_URL);
-    return;
-  }
+function isLocalOriginUrl(url) {
   try {
-    const host = new URL(current).hostname.toLowerCase();
-    if (LEGACY_STREAM_HOSTS.has(host)) {
-      store.set('streamUrl', DEFAULT_STREAM_URL);
-    }
+    const host = new URL(url).hostname.toLowerCase();
+    return host === '127.0.0.1' || host === 'localhost';
   } catch {
-    store.set('streamUrl', DEFAULT_STREAM_URL);
+    return false;
   }
 }
 
-migrateStreamUrl();
+function isUsingBundledUi() {
+  return Boolean(localServer && isLocalOriginUrl(getStreamUrl()));
+}
+
+/**
+ * Prefer bundled local UI when available. KSTREAM_URL always wins.
+ * Migrate users off legacy remotes (and the old kdesa.stream default) onto local.
+ */
+function migrateStreamUrl() {
+  if (ENV_STREAM_URL) {
+    store.set('streamUrl', ENV_STREAM_URL);
+    return;
+  }
+
+  const preferred = defaultStreamUrl;
+  const current = store.get('streamUrl', preferred);
+  if (!current || typeof current !== 'string') {
+    store.set('streamUrl', preferred);
+    return;
+  }
+
+  try {
+    const host = new URL(current).hostname.toLowerCase();
+    const shouldMigrate =
+      LEGACY_STREAM_HOSTS.has(host) ||
+      (localServer && isLocalOriginUrl(preferred) && !isLocalOriginUrl(current));
+    // Keep an existing local URL if the port matches a previous run — otherwise
+    // refresh to the new ephemeral port from this session.
+    if (localServer && isLocalOriginUrl(current)) {
+      store.set('streamUrl', preferred);
+      return;
+    }
+    if (shouldMigrate) {
+      store.set('streamUrl', preferred);
+    }
+  } catch {
+    store.set('streamUrl', preferred);
+  }
+}
 
 function getRunModeLabel() {
   const mode = store.get('runMode', null);
-  if (mode === 'installed' || mode === 'portable') return mode;
-  if (isRunningFromInstallDir()) return 'installed';
-  if (hasPortableMarker()) return 'portable';
-  return 'unknown';
+  let base = 'unknown';
+  if (mode === 'installed' || mode === 'portable') base = mode;
+  else if (isRunningFromInstallDir()) base = 'installed';
+  else if (hasPortableMarker()) base = 'portable';
+  if (isUsingBundledUi()) {
+    return base === 'unknown' ? 'bundled' : `${base}+bundled`;
+  }
+  return base;
 }
 
 function getStreamUrl() {
-  return store.get('streamUrl', DEFAULT_STREAM_URL) || DEFAULT_STREAM_URL;
+  return store.get('streamUrl', defaultStreamUrl) || defaultStreamUrl;
 }
 
 function getStreamHostname() {
@@ -119,6 +158,22 @@ function getStreamHostname() {
   } catch {
     return null;
   }
+}
+
+async function ensureLocalServer() {
+  if (ENV_STREAM_URL) {
+    console.log('[kstream-desktop] KSTREAM_URL set — skipping bundled local server');
+    return null;
+  }
+  const webRoot = resolveWebRoot();
+  if (!webRoot) {
+    console.log('[kstream-desktop] no bundled web UI — using', REMOTE_STREAM_URL);
+    return null;
+  }
+  if (localServer) return localServer;
+  localServer = await startLocalServer({ webRoot });
+  defaultStreamUrl = localServer.origin;
+  return localServer;
 }
 
 function createTray(win) {
@@ -384,6 +439,7 @@ function registerIpc() {
   ipcMain.handle('getDesktopAppInfo', async () => ({
     streamUrl: getStreamUrl(),
     runMode: getRunModeLabel(),
+    originMode: isUsingBundledUi() ? 'bundled' : 'remote',
     installDir: getInstallDir(),
     version: app.getVersion(),
   }));
@@ -624,6 +680,17 @@ if (!gotLock) {
       return;
     }
 
+    try {
+      await ensureLocalServer();
+    } catch (err) {
+      console.warn(
+        '[kstream-desktop] local server failed — falling back to remote',
+        err?.message || err,
+      );
+      defaultStreamUrl = ENV_STREAM_URL || REMOTE_STREAM_URL;
+    }
+    migrateStreamUrl();
+
     setupInterceptors(session.defaultSession, { getStreamHostname });
     registerIpc();
     registerSetupIpc();
@@ -655,6 +722,10 @@ if (!gotLock) {
 app.on('before-quit', () => {
   isQuitting = true;
   shutdownDiscordPresence();
+  if (localServer) {
+    localServer.close().catch(() => {});
+    localServer = null;
+  }
   if (mainWindow && !mainWindow.isDestroyed() && !showingSetup) {
     const { width, height, x, y } = mainWindow.getBounds();
     store.set('windowBounds', { width, height, x, y });

@@ -6,3 +6,7 @@ out/
 release/
 .env
 .env.*
+# Bundled web UI is generated — keep the folder via resources/web/.gitkeep
+!resources/web/
+!resources/web/.gitkeep
+!resources/web/.gitignore

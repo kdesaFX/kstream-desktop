@@ -6,12 +6,29 @@ Windows desktop shell for [kstream](https://github.com/kdesaFX/kstream).
 
 - One download: `kstream-Setup.exe` (portable build)
 - Branded first-run UI — **install** to AppData or **keep portable**
-- Loads your live kstream site (default `https://kstream-one.vercel.app`; later `https://kdesa.stream`)
+- **Bundled local UI** on `http://127.0.0.1` (no Cloudflare / domain block for the shell)
 - Native scraping via built-in extension bridge (no Chrome extension)
 - System tray + close-to-tray
 - Auto-update checks from GitHub Releases (best after install)
 
 **Not in Core yet:** offline downloads.
+
+## Local mode
+
+Release builds embed a copy of the kstream web UI. On launch the desktop app:
+
+1. Starts a tiny HTTP server on `127.0.0.1` (random free port)
+2. Serves the bundled SPA + `/api/proxy` (for MangaDex covers / scrape fallback)
+3. Loads that local origin instead of `https://kdesa.stream`
+
+Streaming still needs internet (TMDB, sources, CDNs). Only the **UI shell** is local.
+
+Force the remote site (or Vite) with:
+
+```bash
+set KSTREAM_URL=https://kdesa.stream
+pnpm start
+```
 
 ## First run
 
@@ -33,10 +50,20 @@ pnpm install --config.block-exotic-subdeps=false
 pnpm start
 ```
 
-Optional: point at a different site:
+Point at Vite during web development:
 
 ```bash
 set KSTREAM_URL=http://localhost:5173
+pnpm start
+```
+
+Or build and embed the web UI locally:
+
+```bash
+cd ../kstream
+pnpm build
+xcopy /E /I /Y dist\* ..\kstream-desktop\resources\web\
+cd ../kstream-desktop
 pnpm start
 ```
 
@@ -44,7 +71,10 @@ In dev, the welcome screen still appears until you pick a mode (`runMode` in set
 
 ## Build Windows package
 
+CI builds kstream `@production` and copies `dist/` into `resources/web` before packaging. Locally:
+
 ```bash
+# after embedding web UI into resources/web (see above)
 pnpm run dist
 ```
 

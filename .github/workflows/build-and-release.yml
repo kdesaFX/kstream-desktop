@@ -25,8 +25,15 @@ jobs:
       AZURE_CERT_PROFILE_NAME: ${{ secrets.AZURE_CERT_PROFILE_NAME }}
       AZURE_PUBLISHER_NAME: ${{ secrets.AZURE_PUBLISHER_NAME }}
     steps:
-      - name: Checkout
+      - name: Checkout desktop
         uses: actions/checkout@v4
+
+      - name: Checkout kstream web
+        uses: actions/checkout@v4
+        with:
+          repository: kdesaFX/kstream
+          ref: production
+          path: kstream-web
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -38,7 +45,33 @@ jobs:
         with:
           version: 9
 
-      - name: Install dependencies
+      - name: Install kstream web dependencies
+        working-directory: kstream-web
+        run: pnpm install --frozen-lockfile
+
+      - name: Build kstream web
+        working-directory: kstream-web
+        run: pnpm build
+        env:
+          VITE_APP_DOMAIN: http://127.0.0.1
+          VITE_NORMAL_ROUTER: 'true'
+          VITE_HAS_ONBOARDING: 'true'
+          VITE_CORS_PROXY_URL: /api/proxy
+          VITE_M3U8_PROXY_URL: /api
+
+      - name: Embed web UI into desktop resources
+        shell: pwsh
+        run: |
+          $dest = "resources/web"
+          if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Copy-Item -Recurse -Force "kstream-web/dist/*" $dest
+          if (-not (Test-Path "$dest/index.html")) {
+            throw "kstream web build did not produce index.html"
+          }
+          Write-Host "Bundled web UI files:" (Get-ChildItem $dest -Recurse -File | Measure-Object).Count
+
+      - name: Install desktop dependencies
         run: pnpm install --config.block-exotic-subdeps=false
 
       - name: Report signing mode
