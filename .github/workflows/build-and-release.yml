@@ -160,3 +160,41 @@ jobs:
             fi
           done
           gh release edit "$TAG" --draft=false --latest || true
+
+      - name: Mirror installer to kstream R2 CDN
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          EXE=$(ls dist/*Setup*.exe dist/kstream-Setup.exe 2>/dev/null | head -n1 || true)
+          if [ -z "$EXE" ] || [ ! -f "$EXE" ]; then
+            echo "No Setup.exe in dist — skip R2 mirror"
+            exit 0
+          fi
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "CLOUDFLARE_API_TOKEN not set on kstream-desktop — kstream cron will sync within ~4h"
+            exit 0
+          fi
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            CLOUDFLARE_ACCOUNT_ID=$(curl -sf -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              "https://api.cloudflare.com/client/v4/accounts?per_page=1" \
+              | jq -r '.result[0].id // empty')
+          fi
+          export CLOUDFLARE_ACCOUNT_ID
+          echo "Mirroring $(basename "$EXE") ($(du -h "$EXE" | cut -f1)) to R2 kstream-downloads"
+          npx --yes wrangler@4.54.0 r2 object put \
+            kstream-downloads/kstream-Setup.exe \
+            --file "$EXE" \
+            --content-type application/octet-stream \
+            --remote
+
+      - name: Ping kstream sync workflow
+        env:
+          GH_TOKEN: ${{ secrets.KSTREAM_WORKFLOW_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "No KSTREAM_WORKFLOW_TOKEN — kstream cron will sync within ~4h"
+            exit 0
+          fi
+          gh api repos/kdesaFX/kstream/dispatches -f event_type=desktop-release
+          echo "Dispatched desktop-release to kstream"
