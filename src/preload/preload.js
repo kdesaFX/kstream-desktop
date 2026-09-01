@@ -14,6 +14,9 @@ const PUBLIC_CHANNELS = [
   'mangaOfflineDownload',
   'mangaOfflineGetPages',
   'mangaOfflineHas',
+  'videoOfflineStart',
+  'videoOfflineList',
+  'videoOfflineDelete',
 ];
 
 async function invokeDesktop(name, body) {
@@ -37,6 +40,17 @@ contextBridge.exposeInMainWorld('__KSTREAM_DESKTOP_IPC__', {
     };
     ipcRenderer.on('kstream:pause-for-close', handler);
     return () => ipcRenderer.removeListener('kstream:pause-for-close', handler);
+  },
+  onOpenOffline: (cb) => {
+    const handler = () => {
+      try {
+        cb();
+      } catch (err) {
+        console.error('[kstream-desktop] open-offline handler failed', err);
+      }
+    };
+    ipcRenderer.on('kstream:open-offline', handler);
+    return () => ipcRenderer.removeListener('kstream:open-offline', handler);
   },
 });
 
@@ -84,11 +98,11 @@ contextBridge.exposeInMainWorld('isDesktopApp', true);
 contextBridge.exposeInMainWorld('PSTREAM_DESKTOP', true);
 
 contextBridge.exposeInMainWorld('desktopApi', {
-  startDownload() {
-    console.info('[kstream-desktop] Offline downloads are not available in Core v1.');
+  startDownload(data) {
+    return invokeDesktop('videoOfflineStart', data);
   },
   openOffline() {
-    console.info('[kstream-desktop] Offline library is not available in Core v1.');
+    return invokeDesktop('openOfflineApp');
   },
 });
 

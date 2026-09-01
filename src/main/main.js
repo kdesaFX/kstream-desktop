@@ -49,6 +49,14 @@ const {
   getOfflineChapterPages,
   hasOfflineChapter,
 } = require('./manga-offline');
+const {
+  initVideoOffline,
+  startVideoDownload,
+  listDownloads,
+  readMeta,
+  getPlaybackUrl,
+  deleteDownload,
+} = require('./video-offline');
 
 // Must run before userData / store is touched.
 configurePortableUserData();
@@ -474,7 +482,6 @@ function registerIpc() {
     );
     return updateDiscordPresence(enriched);
   });
-  ipcMain.handle('openOfflineApp', async () => ({ success: true }));
 
   ipcMain.handle('getDesktopAppInfo', async () => ({
     streamUrl: getStreamUrl(),
@@ -515,6 +522,31 @@ function registerIpc() {
   ipcMain.handle('mangaOfflineHas', async (_event, body) =>
     hasOfflineChapter(body?.chapterId),
   );
+
+  ipcMain.handle('videoOfflineStart', async (_event, body) => startVideoDownload(body));
+
+  ipcMain.handle('videoOfflineList', async () => {
+    const origin =
+      localServer?.origin ||
+      (isLocalOriginUrl(getStreamUrl()) ? getStreamUrl() : null);
+    const items = listDownloads().map((meta) => ({
+      ...meta,
+      playbackUrl:
+        meta.status === 'ready' && origin ? getPlaybackUrl(meta.id, origin) : null,
+    }));
+    return { items };
+  });
+
+  ipcMain.handle('videoOfflineDelete', async (_event, body) =>
+    deleteDownload(body?.id),
+  );
+
+  ipcMain.handle('openOfflineApp', async () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('kstream:open-offline');
+    }
+    return { success: true };
+  });
 
   ipcMain.handle('runNetworkCheck', async () =>
     runNetworkCheck({
@@ -760,6 +792,7 @@ if (!gotLock) {
 
     initTmdbCache(app.getPath('userData'));
     initMangaOffline(app.getPath('userData'));
+    initVideoOffline(app.getPath('userData'));
 
     try {
       await ensureLocalServer();
