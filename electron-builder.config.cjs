@@ -42,9 +42,14 @@ const webRoot = path.join(__dirname, 'resources', 'web');
 const hasBundledWeb = fs.existsSync(path.join(webRoot, 'index.html'));
 if (hasBundledWeb) {
   console.log('[kstream-desktop] Bundling local web UI from resources/web');
+} else if (process.env.CI || process.env.REQUIRE_BUNDLED_WEB === '1') {
+  console.error(
+    '[kstream-desktop] resources/web/index.html is required for release builds. Embed kstream dist/ first.',
+  );
+  process.exit(1);
 } else {
   console.log(
-    '[kstream-desktop] No resources/web/index.html — build will fall back to remote URL at runtime',
+    '[kstream-desktop] No resources/web/index.html — dev builds can use KSTREAM_URL',
   );
 }
 

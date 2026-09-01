@@ -98,7 +98,22 @@ function assertSafeDestination(raw) {
   return parsed;
 }
 
-function buildUpstreamHeaders(incoming) {
+function parseClientHeaders(raw) {
+  const out = {};
+  if (!raw) return out;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return out;
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === 'string' && value) out[key] = value;
+    }
+  } catch {
+    // ignore malformed headers JSON
+  }
+  return out;
+}
+
+function buildUpstreamHeaders(incoming, embedded = {}) {
   const out = {
     'User-Agent': DEFAULT_UA,
   };
@@ -112,6 +127,9 @@ function buildUpstreamHeaders(incoming) {
     if (PASSTHROUGH_HEADERS.has(lower)) {
       out[key] = value;
     }
+  }
+  for (const [key, value] of Object.entries(embedded)) {
+    out[key] = value;
   }
   return out;
 }
@@ -183,7 +201,10 @@ async function handleProxy(req, res, requestUrl) {
     }
 
     const target = assertSafeDestination(destination);
-    const upstreamHeaders = buildUpstreamHeaders(collectRequestHeaders(req));
+    const upstreamHeaders = buildUpstreamHeaders(
+      collectRequestHeaders(req),
+      parseClientHeaders(requestUrl.searchParams.get('headers')),
+    );
 
     const host = target.hostname.toLowerCase();
     if (

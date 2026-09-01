@@ -23,12 +23,16 @@ Release builds embed a copy of the kstream web UI. On launch the desktop app:
 
 Streaming still needs internet (TMDB, sources, CDNs). Only the **UI shell** is local.
 
-Force the remote site (or Vite) with:
+Release builds **always** use bundled local UI. Packaged installs never load `kdesa.stream` for the app shell — school filters can't block the UI.
+
+Force the remote site (or Vite) in **development only**:
 
 ```bash
 set KSTREAM_URL=https://kdesa.stream
 pnpm start
 ```
+
+`KSTREAM_URL` is ignored in packaged builds.
 
 ## First run
 

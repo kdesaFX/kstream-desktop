@@ -58,9 +58,10 @@ const PRELOAD = path.join(__dirname, '..', 'preload', 'preload.js');
 const SETUP_PRELOAD = path.join(__dirname, '..', 'preload', 'setup-preload.js');
 const WELCOME_HTML = path.join(__dirname, '..', 'renderer', 'welcome', 'index.html');
 
-// Remote fallback when no bundled web UI is present. Override with KSTREAM_URL.
+// Remote fallback for dev when no bundled web UI is present.
+// Packaged builds always use bundled local UI — KSTREAM_URL is dev-only.
 const REMOTE_STREAM_URL = 'https://kdesa.stream';
-const ENV_STREAM_URL = process.env.KSTREAM_URL || null;
+const ENV_STREAM_URL = app.isPackaged ? null : process.env.KSTREAM_URL || null;
 const LEGACY_STREAM_HOSTS = new Set([
   'kstream.lol',
   'www.kstream.lol',
@@ -107,6 +108,12 @@ function isUsingBundledUi() {
 function migrateStreamUrl() {
   if (ENV_STREAM_URL) {
     store.set('streamUrl', ENV_STREAM_URL);
+    return;
+  }
+
+  // Packaged builds always load the bundled SPA from 127.0.0.1.
+  if (localServer) {
+    store.set('streamUrl', localServer.origin);
     return;
   }
 
@@ -160,6 +167,22 @@ function getStreamHostname() {
   }
 }
 
+async function quitMissingBundledWeb(reason) {
+  const detail =
+    reason ||
+    'This installer should include a local copy of kstream. Reinstall from kdesa.stream or the latest GitHub release.';
+  await dialog.showMessageBox({
+    type: 'error',
+    title: 'kstream',
+    message: 'Bundled UI is missing',
+    detail,
+    buttons: ['Quit'],
+    defaultId: 0,
+    noLink: true,
+  });
+  app.quit();
+}
+
 async function ensureLocalServer() {
   if (ENV_STREAM_URL) {
     console.log('[kstream-desktop] KSTREAM_URL set — skipping bundled local server');
@@ -167,6 +190,10 @@ async function ensureLocalServer() {
   }
   const webRoot = resolveWebRoot();
   if (!webRoot) {
+    if (app.isPackaged) {
+      await quitMissingBundledWeb();
+      return null;
+    }
     console.log('[kstream-desktop] no bundled web UI — using', REMOTE_STREAM_URL);
     return null;
   }
@@ -683,11 +710,20 @@ if (!gotLock) {
     try {
       await ensureLocalServer();
     } catch (err) {
-      console.warn(
-        '[kstream-desktop] local server failed — falling back to remote',
-        err?.message || err,
-      );
+      const message = err?.message || String(err);
+      console.error('[kstream-desktop] local server failed', message);
+      if (app.isPackaged) {
+        dialog.showErrorBox(
+          'kstream failed to start',
+          `Could not start the local UI server.\n\n${message}\n\nReinstall the app or restart your computer.`,
+        );
+        app.quit();
+        return;
+      }
       defaultStreamUrl = ENV_STREAM_URL || REMOTE_STREAM_URL;
+    }
+    if (app.isPackaged && !localServer) {
+      return;
     }
     migrateStreamUrl();
 
