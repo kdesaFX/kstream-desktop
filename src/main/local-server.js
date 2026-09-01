@@ -11,6 +11,9 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
+const {
+  serveMangaOffline,
+} = require('./manga-offline');
 
 const DEFAULT_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:93.0) Gecko/20100101 Firefox/93.0';
@@ -347,6 +350,11 @@ function startLocalServer(options = {}) {
 
         if (requestUrl.pathname === '/api/proxy') {
           void handleProxy(req, res, requestUrl);
+          return;
+        }
+
+        if (requestUrl.pathname.startsWith('/api/manga-offline/')) {
+          serveMangaOffline(req, res, requestUrl);
           return;
         }
 

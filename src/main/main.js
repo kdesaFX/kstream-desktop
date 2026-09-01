@@ -43,6 +43,12 @@ const {
   setTmdbCacheEntry,
   getTmdbCacheStats,
 } = require('./tmdb-cache');
+const {
+  initMangaOffline,
+  downloadMangaChapter,
+  getOfflineChapterPages,
+  hasOfflineChapter,
+} = require('./manga-offline');
 
 // Must run before userData / store is touched.
 configurePortableUserData();
@@ -492,6 +498,24 @@ function registerIpc() {
     return { ok: true };
   });
 
+  ipcMain.handle('mangaOfflineDownload', async (_event, body) =>
+    downloadMangaChapter(body),
+  );
+
+  ipcMain.handle('mangaOfflineGetPages', async (_event, body) => {
+    const chapterId = body?.chapterId;
+    if (!chapterId) return null;
+    const origin =
+      localServer?.origin ||
+      (isLocalOriginUrl(getStreamUrl()) ? getStreamUrl() : null);
+    if (!origin) return null;
+    return getOfflineChapterPages(chapterId, origin);
+  });
+
+  ipcMain.handle('mangaOfflineHas', async (_event, body) =>
+    hasOfflineChapter(body?.chapterId),
+  );
+
   ipcMain.handle('runNetworkCheck', async () =>
     runNetworkCheck({
       localOrigin: localServer?.origin || (isLocalOriginUrl(getStreamUrl()) ? getStreamUrl() : null),
@@ -735,6 +759,7 @@ if (!gotLock) {
     }
 
     initTmdbCache(app.getPath('userData'));
+    initMangaOffline(app.getPath('userData'));
 
     try {
       await ensureLocalServer();

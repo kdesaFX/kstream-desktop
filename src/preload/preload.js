@@ -11,6 +11,9 @@ const PUBLIC_CHANNELS = [
   'runNetworkCheck',
   'tmdbCacheGet',
   'tmdbCacheSet',
+  'mangaOfflineDownload',
+  'mangaOfflineGetPages',
+  'mangaOfflineHas',
 ];
 
 async function invokeDesktop(name, body) {
