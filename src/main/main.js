@@ -36,6 +36,7 @@ const {
   setLogPath,
 } = require('./discord-rpc');
 const { resolveWebRoot, startLocalServer } = require('./local-server');
+const { runNetworkCheck } = require('./network-check');
 
 // Must run before userData / store is touched.
 configurePortableUserData();
@@ -470,6 +471,12 @@ function registerIpc() {
     installDir: getInstallDir(),
     version: app.getVersion(),
   }));
+
+  ipcMain.handle('runNetworkCheck', async () =>
+    runNetworkCheck({
+      localOrigin: localServer?.origin || (isLocalOriginUrl(getStreamUrl()) ? getStreamUrl() : null),
+    }),
+  );
 }
 
 /**

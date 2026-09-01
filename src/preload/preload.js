@@ -8,6 +8,7 @@ const PUBLIC_CHANNELS = [
   'updateMediaMetadata',
   'openOfflineApp',
   'getDesktopAppInfo',
+  'runNetworkCheck',
 ];
 
 async function invokeDesktop(name, body) {
