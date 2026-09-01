@@ -37,6 +37,12 @@ const {
 } = require('./discord-rpc');
 const { resolveWebRoot, startLocalServer } = require('./local-server');
 const { runNetworkCheck } = require('./network-check');
+const {
+  initTmdbCache,
+  getTmdbCacheEntry,
+  setTmdbCacheEntry,
+  getTmdbCacheStats,
+} = require('./tmdb-cache');
 
 // Must run before userData / store is touched.
 configurePortableUserData();
@@ -470,7 +476,21 @@ function registerIpc() {
     originMode: isUsingBundledUi() ? 'bundled' : 'remote',
     installDir: getInstallDir(),
     version: app.getVersion(),
+    tmdbCache: getTmdbCacheStats(),
   }));
+
+  ipcMain.handle('tmdbCacheGet', async (_event, body) => {
+    const key = body?.key;
+    if (!key?.url) return null;
+    return getTmdbCacheEntry(key, { allowStale: Boolean(body?.allowStale) });
+  });
+
+  ipcMain.handle('tmdbCacheSet', async (_event, body) => {
+    const key = body?.key;
+    if (!key?.url || body?.value == null) return { ok: false };
+    setTmdbCacheEntry(key, body.value, body.ttlSec);
+    return { ok: true };
+  });
 
   ipcMain.handle('runNetworkCheck', async () =>
     runNetworkCheck({
@@ -713,6 +733,8 @@ if (!gotLock) {
       await uninstallInstalled(process.argv.includes('--quiet'));
       return;
     }
+
+    initTmdbCache(app.getPath('userData'));
 
     try {
       await ensureLocalServer();

@@ -9,6 +9,8 @@ const PUBLIC_CHANNELS = [
   'openOfflineApp',
   'getDesktopAppInfo',
   'runNetworkCheck',
+  'tmdbCacheGet',
+  'tmdbCacheSet',
 ];
 
 async function invokeDesktop(name, body) {
