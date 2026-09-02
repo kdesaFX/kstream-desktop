@@ -38,6 +38,14 @@ const {
 const { resolveWebRoot, startLocalServer } = require('./local-server');
 const { runNetworkCheck } = require('./network-check');
 const {
+  registerAuthProtocol,
+  captureStartupAuthCallback,
+  extractProtocolUrl,
+  deliverAuthCallback,
+  flushPendingAuthCallback,
+  attachAuthNavigationGuards,
+} = require('./auth-protocol');
+const {
   initTmdbCache,
   getTmdbCacheEntry,
   setTmdbCacheEntry,
@@ -385,9 +393,10 @@ function createMainWindow() {
     }
   });
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
-    return { action: 'deny' };
+  attachAuthNavigationGuards(mainWindow.webContents);
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    flushPendingAuthCallback(mainWindow);
   });
 
   mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
@@ -546,6 +555,15 @@ function registerIpc() {
       mainWindow.webContents.send('kstream:open-offline');
     }
     return { success: true };
+  });
+
+  ipcMain.handle('openExternalAuth', async (_event, body) => {
+    const url = body?.url;
+    if (!url || typeof url !== 'string') {
+      throw new Error('Missing OAuth URL');
+    }
+    await shell.openExternal(url);
+    return { ok: true };
   });
 
   ipcMain.handle('runNetworkCheck', async () =>
@@ -773,10 +791,14 @@ function setupAutoUpdater() {
 }
 
 const gotLock = app.requestSingleInstanceLock();
+registerAuthProtocol();
+captureStartupAuthCallback(process.argv);
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, commandLine) => {
+    const authUrl = extractProtocolUrl(commandLine);
+    if (authUrl) deliverAuthCallback(mainWindow, authUrl);
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.show();

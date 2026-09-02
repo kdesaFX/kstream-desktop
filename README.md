@@ -41,6 +41,16 @@ After you open `kstream-Setup.exe`:
 1. **Install** (recommended) — copies the app to `%LOCALAPPDATA%\Programs\kstream` and creates Desktop + Start Menu shortcuts, then relaunches from there.
 2. **Portable** — runs from the download location and stores data in a `kstream-data` folder beside the exe.
 
+## OAuth (Google / Discord)
+
+Add this redirect URL in **Supabase → Authentication → URL configuration → Redirect URLs**:
+
+```
+kstream://auth/callback
+```
+
+The desktop app opens OAuth in the user's default browser, then returns via the `kstream://` protocol.
+
 ## SmartScreen
 
 Windows SmartScreen is **not** bypassed by running the installer as admin. It checks **code signing + publisher reputation**.

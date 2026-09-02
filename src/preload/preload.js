@@ -17,6 +17,7 @@ const PUBLIC_CHANNELS = [
   'videoOfflineStart',
   'videoOfflineList',
   'videoOfflineDelete',
+  'openExternalAuth',
 ];
 
 async function invokeDesktop(name, body) {
@@ -51,6 +52,17 @@ contextBridge.exposeInMainWorld('__KSTREAM_DESKTOP_IPC__', {
     };
     ipcRenderer.on('kstream:open-offline', handler);
     return () => ipcRenderer.removeListener('kstream:open-offline', handler);
+  },
+  onAuthCallback: (cb) => {
+    const handler = (_event, url) => {
+      try {
+        cb(url);
+      } catch (err) {
+        console.error('[kstream-desktop] auth-callback handler failed', err);
+      }
+    };
+    ipcRenderer.on('kstream:auth-callback', handler);
+    return () => ipcRenderer.removeListener('kstream:auth-callback', handler);
   },
 });
 
