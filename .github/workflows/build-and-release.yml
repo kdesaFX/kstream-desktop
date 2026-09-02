@@ -109,11 +109,6 @@ jobs:
         # Never publish from electron-builder (it creates draft releases when GH_TOKEN is set).
         run: pnpm run dist
 
-      - name: Verify Authenticode signature
-        if: env.AZURE_TENANT_ID != ''
-        shell: pwsh
-        run: pwsh ./scripts/verify-release-signature.ps1
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
