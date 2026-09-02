@@ -55,7 +55,20 @@ Without those vars, `pnpm run dist` still produces an **unsigned** installer (de
 ## Verify a build is signed
 
 ```powershell
+pwsh ./scripts/verify-release-signature.ps1
+# or
 Get-AuthenticodeSignature .\dist\kstream-Setup.exe | Format-List *
 ```
 
 `Status` should be `Valid`.
+
+## If SmartScreen still warns after signing
+
+Signing is required but not always instant. Common follow-ups:
+
+1. **Publisher name must match** — `AZURE_PUBLISHER_NAME` must match the CN on your Azure identity validation exactly.
+2. **Build reputation** — new publishers/files can warn for a while even when signed. Distribute the same signed build (do not re-upload unsigned copies to R2/CDN).
+3. **Submit false-positive / reputation** — [Microsoft file submission](https://www.microsoft.com/en-us/wdsi/filesubmission) (developer → “I believe this file is safe”). Include the signed `kstream-Setup.exe` hash and your publisher name.
+4. **Keep one download URL** — `kdesa.stream/download/kstream-Setup.exe` should always serve the latest **signed** GitHub release asset.
+
+Unsigned local builds (`pnpm run dist` without Azure env vars) will always trigger SmartScreen — that is expected.

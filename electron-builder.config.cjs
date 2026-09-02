@@ -58,6 +58,8 @@ module.exports = {
   appId: 'com.kdesafx.kstream',
   productName: 'kstream',
   copyright: 'Copyright © 2026 kstream',
+  // Fail release builds if Azure signing is configured but signing does not run.
+  forceCodeSigning: useAzureSigning,
   directories: {
     output: 'dist',
   },
@@ -83,21 +85,14 @@ module.exports = {
         arch: ['x64'],
       },
     ],
+    // Per-user portable — no admin / UAC elevation (school laptops).
     requestedExecutionLevel: 'asInvoker',
     executableName: 'kstream',
-    ...(useAzureSigning
-      ? {
-          sign: {
-            type: 'azure',
-            publisherName:
-              process.env.AZURE_PUBLISHER_NAME || 'kstream',
-            endpoint: process.env.AZURE_CODE_SIGNING_ENDPOINT,
-            codeSigningAccountName:
-              process.env.AZURE_CODE_SIGNING_ACCOUNT_NAME,
-            certificateProfileName: process.env.AZURE_CERT_PROFILE_NAME,
-          },
-        }
-      : {}),
+    // Embed publisher, version, and icon metadata in the main exe (rcedit).
+    signAndEditExecutable: true,
+    // Sign nested DLLs and helpers, not only the outer installer.
+    signDlls: true,
+    signingHashAlgorithms: ['sha256'],
   },
   portable: {
     artifactName: 'kstream-Setup.${ext}',
@@ -105,3 +100,15 @@ module.exports = {
     unpackDirName: 'kstream-portable',
   },
 };
+
+// Azure signing must be applied after the base win config object is defined.
+if (useAzureSigning) {
+  module.exports.win.sign = {
+    type: 'azure',
+    publisherName: process.env.AZURE_PUBLISHER_NAME || 'kstream',
+    endpoint: process.env.AZURE_CODE_SIGNING_ENDPOINT,
+    codeSigningAccountName: process.env.AZURE_CODE_SIGNING_ACCOUNT_NAME,
+    certificateProfileName: process.env.AZURE_CERT_PROFILE_NAME,
+  };
+  module.exports.win.verifyUpdateCodeSignature = true;
+}

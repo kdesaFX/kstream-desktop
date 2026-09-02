@@ -43,9 +43,13 @@ After you open `kstream-Setup.exe`:
 
 ## SmartScreen
 
-Unsigned builds show Windows SmartScreen. Signed releases use **Azure Artifact Signing** — see [SIGNING.md](./SIGNING.md) for the one-time Azure + GitHub secrets setup.
+Windows SmartScreen is **not** bypassed by running the installer as admin. It checks **code signing + publisher reputation**.
 
-Until signing secrets are configured, choose **More info → Run anyway**.
+- **Signed releases** use **Azure Artifact Signing** when GitHub Actions secrets are set — see [SIGNING.md](./SIGNING.md).
+- **Unsigned** local/CI builds always show “Windows protected your PC” → **More info → Run anyway**.
+- After signing is configured, new releases can still warn briefly until Microsoft builds reputation for your publisher (normal).
+
+CI fails the release if Azure secrets are present but the installer is not validly signed (`forceCodeSigning` + signature verify step).
 
 ## Development
 
