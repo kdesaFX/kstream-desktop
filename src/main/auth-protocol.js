@@ -16,6 +16,13 @@ const EXTERNAL_AUTH_HOSTS = [
 /** @type {string | null} */
 let pendingAuthCallbackUrl = null;
 
+/** @type {import('electron').WebContents | null} */
+let mainWebContents = null;
+
+function setMainWebContents(webContents) {
+  mainWebContents = webContents;
+}
+
 function isAuthCallbackUrl(url) {
   return typeof url === 'string' && url.startsWith(AUTH_CALLBACK_PREFIX);
 }
@@ -80,6 +87,9 @@ function attachAuthNavigationGuards(webContents) {
     if (!shouldOpenAuthExternally(url)) return;
     event.preventDefault();
     void shell.openExternal(url);
+    if (mainWebContents && webContents !== mainWebContents && !webContents.isDestroyed()) {
+      webContents.close();
+    }
   });
 
   webContents.setWindowOpenHandler(({ url }) => {
@@ -92,6 +102,12 @@ function attachAuthNavigationGuards(webContents) {
   });
 }
 
+function installGlobalAuthGuards() {
+  app.on('web-contents-created', (_event, webContents) => {
+    attachAuthNavigationGuards(webContents);
+  });
+}
+
 module.exports = {
   AUTH_CALLBACK_PREFIX,
   registerAuthProtocol,
@@ -100,5 +116,7 @@ module.exports = {
   deliverAuthCallback,
   flushPendingAuthCallback,
   attachAuthNavigationGuards,
+  installGlobalAuthGuards,
+  setMainWebContents,
   isAuthCallbackUrl,
 };

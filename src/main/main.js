@@ -44,6 +44,8 @@ const {
   deliverAuthCallback,
   flushPendingAuthCallback,
   attachAuthNavigationGuards,
+  installGlobalAuthGuards,
+  setMainWebContents,
 } = require('./auth-protocol');
 const {
   initTmdbCache,
@@ -394,6 +396,12 @@ function createMainWindow() {
   });
 
   attachAuthNavigationGuards(mainWindow.webContents);
+  setMainWebContents(mainWindow.webContents);
+
+  mainWindow.on('closed', () => {
+    setMainWebContents(null);
+    mainWindow = null;
+  });
 
   mainWindow.webContents.on('did-finish-load', () => {
     flushPendingAuthCallback(mainWindow);
@@ -792,6 +800,7 @@ function setupAutoUpdater() {
 
 const gotLock = app.requestSingleInstanceLock();
 registerAuthProtocol();
+installGlobalAuthGuards();
 captureStartupAuthCallback(process.argv);
 if (!gotLock) {
   app.quit();
