@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, shell } = require('electron');
+const { app, shell, BrowserWindow } = require('electron');
 
 const AUTH_PROTOCOL = 'kstream';
 const AUTH_CALLBACK_PREFIX = `${AUTH_PROTOCOL}://auth/callback`;
@@ -82,14 +82,34 @@ function captureStartupAuthCallback(argv) {
   if (url) pendingAuthCallbackUrl = url;
 }
 
+function closeOAuthChildWindow(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  if (mainWebContents && webContents.id === mainWebContents.id) return;
+  try {
+    const child = BrowserWindow.fromWebContents(webContents);
+    if (child && !child.isDestroyed()) child.close();
+  } catch {
+    // ignore
+  }
+}
+
+function routeOAuthExternally(event, url, webContents) {
+  if (!shouldOpenAuthExternally(url)) return false;
+  if (event?.preventDefault) event.preventDefault();
+  void shell.openExternal(url);
+  closeOAuthChildWindow(webContents);
+  return true;
+}
+
 function attachAuthNavigationGuards(webContents) {
   webContents.on('will-navigate', (event, url) => {
-    if (!shouldOpenAuthExternally(url)) return;
-    event.preventDefault();
-    void shell.openExternal(url);
-    if (mainWebContents && webContents !== mainWebContents && !webContents.isDestroyed()) {
-      webContents.close();
-    }
+    routeOAuthExternally(event, url, webContents);
+  });
+
+  // Supabase → Google/Discord often redirects in-place; will-navigate alone
+  // misses that hop and leaves OAuth trapped inside an Electron window.
+  webContents.on('will-redirect', (event, url) => {
+    routeOAuthExternally(event, url, webContents);
   });
 
   webContents.setWindowOpenHandler(({ url }) => {

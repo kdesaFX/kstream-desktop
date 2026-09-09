@@ -116,6 +116,9 @@ contextBridge.exposeInMainWorld('desktopApi', {
   openOffline() {
     return invokeDesktop('openOfflineApp');
   },
+  openExternal(url) {
+    return invokeDesktop('openExternalAuth', { url });
+  },
 });
 
 console.log('[kstream-desktop] preload ready (direct IPC + relay)');
