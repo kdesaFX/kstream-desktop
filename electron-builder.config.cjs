@@ -89,10 +89,17 @@ module.exports = {
     requestedExecutionLevel: 'asInvoker',
     executableName: 'kstream',
     // Embed publisher, version, and icon metadata in the main exe (rcedit).
-    signAndEditExecutable: true,
-    // Sign nested DLLs and helpers, not only the outer installer.
-    signDlls: true,
-    signingHashAlgorithms: ['sha256'],
+    // Only enable signing-related flags when Azure signing is configured —
+    // electron-builder 26 rejects some of these on unsigned builds.
+    ...(useAzureSigning
+      ? {
+          signAndEditExecutable: true,
+          signDlls: true,
+          signingHashAlgorithms: ['sha256'],
+        }
+      : {
+          signAndEditExecutable: false,
+        }),
   },
   portable: {
     artifactName: 'kstream-Setup.${ext}',
