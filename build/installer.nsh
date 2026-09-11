@@ -3,7 +3,7 @@
 !macro customInit
   InitPluginsDir
   SetOutPath "$PLUGINSDIR"
-  File "${BUILD_RESOURCES_DIR}/clean-old-kstream.ps1"
+  File "${PROJECT_DIR}\build\clean-old-kstream.ps1"
   nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$PLUGINSDIR\clean-old-kstream.ps1"'
   Sleep 400
 !macroend
