@@ -2,8 +2,8 @@
 
 /**
  * Local HTTP server for bundled kstream UI.
- * Serves static SPA assets + /api/proxy (MangaDex covers / scrape fallback).
- * HLS m3u8/ts proxies are intentionally omitted — desktop uses native IPC.
+ * Serves static SPA assets + /api/proxy (MangaDex covers / scrape fallback)
+ * and /api/m3u8-proxy + /api/ts-proxy so desktop HLS matches the website.
  */
 
 const http = require('http');
@@ -17,6 +17,7 @@ const {
 const {
   serveOfflineVideo,
 } = require('./video-offline');
+const { handleM3u8Proxy, handleTsProxy } = require('./hls-proxy');
 
 const DEFAULT_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:93.0) Gecko/20100101 Firefox/93.0';
@@ -353,6 +354,16 @@ function startLocalServer(options = {}) {
 
         if (requestUrl.pathname === '/api/proxy') {
           void handleProxy(req, res, requestUrl);
+          return;
+        }
+
+        if (requestUrl.pathname === '/api/m3u8-proxy') {
+          handleM3u8Proxy(req, res, requestUrl);
+          return;
+        }
+
+        if (requestUrl.pathname === '/api/ts-proxy') {
+          handleTsProxy(req, res, requestUrl);
           return;
         }
 

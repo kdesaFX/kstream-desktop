@@ -61,11 +61,18 @@ async function runNetworkCheck(options = {}) {
     });
 
     const proxyDest = encodeURIComponent('https://api.mangadex.org/manga?limit=1');
+    const m3u8Dest = encodeURIComponent('https://example.com/master.m3u8');
     tests.push({
       id: 'local-proxy',
       label: 'Local scrape proxy',
       optional: false,
       ...(await probeUrl(`${localOrigin}/api/proxy?destination=${proxyDest}`)),
+    });
+    tests.push({
+      id: 'local-m3u8-proxy',
+      label: 'Local HLS proxy',
+      optional: false,
+      ...(await probeUrl(`${localOrigin}/api/m3u8-proxy?url=${m3u8Dest}`)),
     });
   }
 
