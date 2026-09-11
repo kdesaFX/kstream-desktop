@@ -99,7 +99,7 @@ function configureAutoUpdater() {
   configured = true;
 
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.autoRunAppAfterInstall = true;
   autoUpdater.verifyUpdateCodeSignature = false;
 
@@ -201,7 +201,7 @@ async function downloadLatestSetup() {
   let lastError = new Error('Could not download updater');
   for (const url of SETUP_URLS) {
     try {
-      const res = await net.fetch(url, { redirect: 'follow' });
+      const res = await net.fetch(`${url}?t=${Date.now()}`, { redirect: 'follow' });
       if (!res.ok || !res.body) {
         lastError = new Error(`Could not download updater (${res.status})`);
         continue;
@@ -287,7 +287,7 @@ function launchSetupAndQuit(exePath) {
   writePersisted({ pendingApply: true });
   setQuitting();
   scheduleRelaunchAfterApply();
-  const child = spawn(exePath, ['/S', '/currentuser'], {
+  const child = spawn(exePath, ['/S', '/currentuser', '/NCRC'], {
     detached: true,
     stdio: 'ignore',
     windowsVerbatimArguments: true,
@@ -298,7 +298,6 @@ function launchSetupAndQuit(exePath) {
 
 async function startSilentSetupFallback() {
   if (fallbackPromise) return fallbackPromise;
-  if (status.phase === 'ready') return null;
 
   fallbackPromise = (async () => {
     setStatus({
@@ -377,29 +376,11 @@ async function applyDesktopUpdate(quittingSetter) {
     return { ok: false, error: 'dev' };
   }
 
-  if (status.setupPath && fs.existsSync(status.setupPath)) {
-    launchSetupAndQuit(status.setupPath);
-    return { ok: true, via: 'installer' };
+  // Never quitAndInstall — that opens the NSIS wizard. Always run Setup silently.
+  if (!status.setupPath || !fs.existsSync(status.setupPath)) {
+    await startSilentSetupFallback();
   }
 
-  if (status.phase !== 'ready') {
-    await checkDesktopUpdate();
-  }
-
-  if (status.setupPath && fs.existsSync(status.setupPath)) {
-    launchSetupAndQuit(status.setupPath);
-    return { ok: true, via: 'installer' };
-  }
-
-  if (status.phase === 'ready') {
-    writePersisted({ pendingApply: true });
-    setQuitting();
-    scheduleRelaunchAfterApply();
-    autoUpdater.quitAndInstall(true, true);
-    return { ok: true, via: 'electron-updater' };
-  }
-
-  await startSilentSetupFallback();
   if (status.setupPath && fs.existsSync(status.setupPath)) {
     launchSetupAndQuit(status.setupPath);
     return { ok: true, via: 'installer' };
