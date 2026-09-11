@@ -287,7 +287,7 @@ function launchSetupAndQuit(exePath) {
   writePersisted({ pendingApply: true });
   setQuitting();
   scheduleRelaunchAfterApply();
-  const child = spawn(exePath, ['/S'], {
+  const child = spawn(exePath, ['/S', '/currentuser'], {
     detached: true,
     stdio: 'ignore',
     windowsVerbatimArguments: true,

@@ -103,8 +103,8 @@ module.exports = {
   },
   nsis: {
     artifactName: 'kstream-Setup.${ext}',
-    // Wizard so the clean-install pass is visible. /S still works for in-app updates.
-    oneClick: false,
+    // One-click per-user so in-app Relaunch Now never shows the wizard.
+    oneClick: true,
     perMachine: false,
     allowElevation: false,
     allowToChangeInstallationDirectory: false,
