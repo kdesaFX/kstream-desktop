@@ -77,6 +77,7 @@ const {
 
 // Must run before userData / store is touched.
 configurePortableUserData();
+app.setName('kstream');
 app.setAppUserModelId('com.kdesafx.kstream');
 
 // Discord RPC / native pipes can emit errors that would otherwise kill Electron.

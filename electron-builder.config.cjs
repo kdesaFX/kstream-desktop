@@ -88,18 +88,16 @@ module.exports = {
     // Per-user portable — no admin / UAC elevation (school laptops).
     requestedExecutionLevel: 'asInvoker',
     executableName: 'kstream',
-    // Embed publisher, version, and icon metadata in the main exe (rcedit).
-    // Only enable signing-related flags when Azure signing is configured —
-    // electron-builder 26 rejects some of these on unsigned builds.
+    // Always rcedit FileDescription/ProductName so Discord/Task Manager
+    // show "kstream" instead of "Electron". Signing extras stay Azure-only.
+    signAndEditExecutable: true,
+    legalTrademarks: 'kstream',
     ...(useAzureSigning
       ? {
-          signAndEditExecutable: true,
           signDlls: true,
           signingHashAlgorithms: ['sha256'],
         }
-      : {
-          signAndEditExecutable: false,
-        }),
+      : {}),
   },
   nsis: {
     artifactName: 'kstream-Setup.${ext}',
