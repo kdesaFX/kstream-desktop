@@ -10,7 +10,8 @@
 
 !macro customInstall
   nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$PLUGINSDIR\clean-old-kstream.ps1" -Finalize "$INSTDIR"'
-  Exec '"$INSTDIR\kstream.exe"'
+  ; Detach from the installer so /S + a hidden parent job cannot swallow the new process.
+  ExecShell "open" "$INSTDIR\kstream.exe"
 !macroend
 
 !macro customUnInit

@@ -5,6 +5,7 @@ const { autoUpdater } = require('electron-updater');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { getInstallDir } = require('./install');
 
 const SETUP_URLS = ['https://kdesa.stream/download/kstream-Setup.exe'];
 
@@ -240,16 +241,59 @@ async function downloadLatestSetup() {
   throw lastError;
 }
 
+function installedExePath() {
+  return path.join(getInstallDir(), 'kstream.exe');
+}
+
+/** Setup/updater children are often killed with the installer job; this watcher is not. */
+function scheduleRelaunchAfterApply() {
+  const exe = installedExePath();
+  const script = [
+    `$exe = ${JSON.stringify(exe)}`,
+    'for ($i = 0; $i -lt 40; $i++) {',
+    '  Start-Sleep -Seconds 2',
+    '  if (-not (Test-Path -LiteralPath $exe)) { continue }',
+    '  $running = @(Get-CimInstance Win32_Process -Filter "Name = \'kstream.exe\'" -ErrorAction SilentlyContinue)',
+    '  $installed = $running | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.ToLower() -eq $exe.ToLower() }',
+    '  if ($installed) { exit 0 }',
+    '  if ($running.Count -gt 0) { continue }',
+    '  try {',
+    '    Start-Process -FilePath $exe',
+    '    exit 0',
+    '  } catch { }',
+    '}',
+  ].join('; ');
+  const child = spawn(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-WindowStyle',
+      'Hidden',
+      '-Command',
+      script,
+    ],
+    {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    },
+  );
+  child.unref();
+}
+
 function launchSetupAndQuit(exePath) {
   writePersisted({ pendingApply: true });
   setQuitting();
+  scheduleRelaunchAfterApply();
   const child = spawn(exePath, ['/S'], {
     detached: true,
     stdio: 'ignore',
-    windowsHide: true,
+    windowsVerbatimArguments: true,
   });
   child.unref();
-  setTimeout(() => app.quit(), 400);
+  setTimeout(() => app.quit(), 800);
 }
 
 async function startSilentSetupFallback() {
@@ -350,7 +394,8 @@ async function applyDesktopUpdate(quittingSetter) {
   if (status.phase === 'ready') {
     writePersisted({ pendingApply: true });
     setQuitting();
-    autoUpdater.quitAndInstall(false, true);
+    scheduleRelaunchAfterApply();
+    autoUpdater.quitAndInstall(true, true);
     return { ok: true, via: 'electron-updater' };
   }
 

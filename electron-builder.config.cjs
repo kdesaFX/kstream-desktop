@@ -114,9 +114,7 @@ module.exports = {
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
     deleteAppDataOnUninstall: false,
-    // customInstall already Exec's $INSTDIR\kstream.exe so the portable
-    // switch always lands in the new app (wizard checkbox cannot skip it).
-    runAfterFinish: false,
+    runAfterFinish: true,
   },
 };
 
