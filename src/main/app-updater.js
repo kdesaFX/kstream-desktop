@@ -76,25 +76,67 @@ function setupDestPath() {
   return path.join(app.getPath('temp'), 'kstream-Setup.exe');
 }
 
+function writeWebStreamToFile(webStream, dest) {
+  return new Promise((resolve, reject) => {
+    const writer = fs.createWriteStream(dest);
+    writer.on('error', reject);
+    const reader = webStream.getReader();
+
+    const pump = () => {
+      reader
+        .read()
+        .then(({ done, value }) => {
+          if (done) {
+            writer.end();
+            return;
+          }
+          const chunk = Buffer.from(value);
+          if (writer.write(chunk)) {
+            pump();
+          } else {
+            writer.once('drain', pump);
+          }
+        })
+        .catch((err) => {
+          writer.destroy();
+          reject(err);
+        });
+    };
+
+    writer.on('finish', resolve);
+    pump();
+  });
+}
+
 async function downloadLatestSetup() {
   const dest = setupDestPath();
   let lastError = new Error('Could not download updater');
   for (const url of SETUP_URLS) {
     try {
       const res = await net.fetch(url, { redirect: 'follow' });
-      if (!res.ok) {
+      if (!res.ok || !res.body) {
         lastError = new Error(`Could not download updater (${res.status})`);
         continue;
       }
-      const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.length < 1_000_000) {
+      await writeWebStreamToFile(res.body, dest);
+      const size = fs.statSync(dest).size;
+      if (size < 1_000_000) {
         lastError = new Error('Updater download looks incomplete');
+        try {
+          fs.unlinkSync(dest);
+        } catch {
+          // ignore
+        }
         continue;
       }
-      fs.writeFileSync(dest, buf);
       return dest;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
+      try {
+        if (fs.existsSync(dest)) fs.unlinkSync(dest);
+      } catch {
+        // ignore
+      }
     }
   }
   throw lastError;
@@ -108,7 +150,8 @@ function launchSetupAndQuit(exePath, setQuitting) {
     windowsHide: true,
   });
   child.unref();
-  app.quit();
+  // Give the setup process a moment to start before we unlock our own exe.
+  setTimeout(() => app.quit(), 400);
 }
 
 function isKstreamSetupDownload(filename, url) {

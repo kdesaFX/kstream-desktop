@@ -107,14 +107,19 @@ module.exports = {
   },
   nsis: {
     artifactName: 'kstream-Setup.${ext}',
-    oneClick: true,
+    // Wizard so overwrite / file-lock errors are visible. /S still works for
+    // in-app updates. customInit kills a running older kstream.exe first.
+    oneClick: false,
     perMachine: false,
     allowElevation: false,
+    allowToChangeInstallationDirectory: false,
+    include: 'build/installer.nsh',
     shortcutName: 'kstream',
     uninstallDisplayName: 'kstream',
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
     deleteAppDataOnUninstall: false,
+    runAfterFinish: true,
   },
   portable: {
     artifactName: 'kstream-portable.${ext}',
