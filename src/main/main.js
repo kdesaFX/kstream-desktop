@@ -12,8 +12,8 @@ const {
   dialog,
 } = require('electron');
 const path = require('path');
-const { autoUpdater } = require('electron-updater');
 const { handlers, setupInterceptors, CHROME_UA } = require('./ipc-handlers');
+const { setupBackgroundCheck, installDesktopUpdate } = require('./app-updater');
 const SimpleStore = require('./storage');
 const {
   configurePortableUserData,
@@ -259,7 +259,9 @@ function createTray(win) {
     {
       label: 'Check for updates',
       click: () => {
-        autoUpdater.checkForUpdates().catch((err) => {
+        installDesktopUpdate(() => {
+          isQuitting = true;
+        }).catch((err) => {
           console.warn('[kstream-desktop] update check failed', err);
         });
       },
@@ -509,6 +511,12 @@ function registerIpc() {
     tmdbCache: getTmdbCacheStats(),
   }));
 
+  ipcMain.handle('installDesktopUpdate', async () =>
+    installDesktopUpdate(() => {
+      isQuitting = true;
+    }),
+  );
+
   ipcMain.handle('tmdbCacheGet', async (_event, body) => {
     const key = body?.key;
     if (!key?.url) return null;
@@ -733,69 +741,7 @@ async function fetchReleaseDateFromPage(tmdbId, mediaType) {
 }
 
 function setupAutoUpdater() {
-  if (!app.isPackaged) {
-    console.log('[kstream-desktop] skipping auto-updater in dev');
-    return;
-  }
-
-  // Never auto-install without asking — avoids surprise relaunches.
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = false;
-
-  autoUpdater.on('update-available', (info) => {
-    console.log('[kstream-desktop] update available', info.version);
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    dialog
-      .showMessageBox(mainWindow, {
-        type: 'info',
-        title: 'Update available',
-        message: `kstream ${info.version} is available.`,
-        detail: 'Download and install now?',
-        buttons: ['Download', 'Later'],
-        defaultId: 0,
-        cancelId: 1,
-      })
-      .then(({ response }) => {
-        if (response === 0) {
-          autoUpdater.downloadUpdate().catch((err) => {
-            console.warn('[kstream-desktop] update download failed', err);
-          });
-        }
-      })
-      .catch(() => {});
-  });
-
-  autoUpdater.on('update-downloaded', (info) => {
-    console.log('[kstream-desktop] update downloaded', info.version);
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    dialog
-      .showMessageBox(mainWindow, {
-        type: 'info',
-        title: 'Update ready',
-        message: `kstream ${info.version} is ready to install.`,
-        detail: 'Restart now to apply the update?',
-        buttons: ['Restart', 'Later'],
-        defaultId: 0,
-        cancelId: 1,
-      })
-      .then(({ response }) => {
-        if (response === 0) {
-          isQuitting = true;
-          autoUpdater.quitAndInstall();
-        }
-      })
-      .catch(() => {});
-  });
-
-  autoUpdater.on('error', (err) => {
-    console.warn('[kstream-desktop] updater error', err?.message || err);
-  });
-
-  setTimeout(() => {
-    autoUpdater.checkForUpdates().catch((err) => {
-      console.warn('[kstream-desktop] update check failed', err?.message || err);
-    });
-  }, 15000);
+  setupBackgroundCheck();
 }
 
 const gotLock = app.requestSingleInstanceLock();

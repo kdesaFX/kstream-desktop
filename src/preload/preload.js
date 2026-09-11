@@ -18,6 +18,7 @@ const PUBLIC_CHANNELS = [
   'videoOfflineList',
   'videoOfflineDelete',
   'openExternalAuth',
+  'installDesktopUpdate',
 ];
 
 async function invokeDesktop(name, body) {

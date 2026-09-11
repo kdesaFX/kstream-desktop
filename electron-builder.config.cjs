@@ -81,6 +81,10 @@ module.exports = {
     icon: 'icon.ico',
     target: [
       {
+        target: 'nsis',
+        arch: ['x64'],
+      },
+      {
         target: 'portable',
         arch: ['x64'],
       },
@@ -101,8 +105,19 @@ module.exports = {
           signAndEditExecutable: false,
         }),
   },
-  portable: {
+  nsis: {
     artifactName: 'kstream-Setup.${ext}',
+    oneClick: true,
+    perMachine: false,
+    allowElevation: false,
+    shortcutName: 'kstream',
+    uninstallDisplayName: 'kstream',
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true,
+    deleteAppDataOnUninstall: false,
+  },
+  portable: {
+    artifactName: 'kstream-portable.${ext}',
     requestExecutionLevel: 'user',
     unpackDirName: 'kstream-portable',
   },
