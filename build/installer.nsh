@@ -1,10 +1,11 @@
-; Close any running kstream before overwrite. Old portable / in-app installs
-; leave kstream.exe locked, which makes a one-click setup look like a no-op.
+; First-run Setup: quit old kstream, delete leftover app files, then install fresh.
+; In-app updates still pass /S and go through this same cleanup.
 !macro customInit
-  nsExec::Exec 'taskkill /F /IM kstream.exe /T'
-  Sleep 800
-  ; Custom in-app installer used this ARP key; NSIS uses the appId key.
-  nsExec::Exec 'reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\kstream" /f'
+  InitPluginsDir
+  SetOutPath "$PLUGINSDIR"
+  File "${BUILD_RESOURCES_DIR}/clean-old-kstream.ps1"
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$PLUGINSDIR\clean-old-kstream.ps1"'
+  Sleep 400
 !macroend
 
 !macro customUnInit

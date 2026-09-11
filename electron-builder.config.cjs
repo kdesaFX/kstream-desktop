@@ -84,10 +84,6 @@ module.exports = {
         target: 'nsis',
         arch: ['x64'],
       },
-      {
-        target: 'portable',
-        arch: ['x64'],
-      },
     ],
     // Per-user portable — no admin / UAC elevation (school laptops).
     requestedExecutionLevel: 'asInvoker',
@@ -107,8 +103,7 @@ module.exports = {
   },
   nsis: {
     artifactName: 'kstream-Setup.${ext}',
-    // Wizard so overwrite / file-lock errors are visible. /S still works for
-    // in-app updates. customInit kills a running older kstream.exe first.
+    // Wizard so the clean-install pass is visible. /S still works for in-app updates.
     oneClick: false,
     perMachine: false,
     allowElevation: false,
@@ -120,11 +115,6 @@ module.exports = {
     createStartMenuShortcut: true,
     deleteAppDataOnUninstall: false,
     runAfterFinish: true,
-  },
-  portable: {
-    artifactName: 'kstream-portable.${ext}',
-    requestExecutionLevel: 'user',
-    unpackDirName: 'kstream-portable',
   },
 };
 

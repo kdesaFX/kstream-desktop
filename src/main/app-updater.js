@@ -176,9 +176,9 @@ function attachInstallerDownloadHandler(sess, setQuitting) {
 }
 
 /**
- * User clicked Update in the web UI.
- * Prefer electron-updater (NSIS). Portable / missing latest.yml falls back
- * to downloading kstream-Setup.exe and launching it silently.
+ * User clicked Update. NSIS installs use electron-updater (no Save As).
+ * If that path is unavailable, download Setup and run it silently — the
+ * installer wipes leftover app files first.
  */
 async function installDesktopUpdate(setQuitting) {
   if (!app.isPackaged) {
@@ -190,7 +190,7 @@ async function installDesktopUpdate(setQuitting) {
   pendingDownload = (async () => {
     configureAutoUpdater();
     try {
-      const downloaded = waitForEvent('update-downloaded', 10 * 60 * 1000);
+      const downloaded = waitForEvent('update-downloaded', 60 * 1000);
       await autoUpdater.checkForUpdates();
       await autoUpdater.downloadUpdate();
       await downloaded;
