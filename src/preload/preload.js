@@ -19,6 +19,9 @@ const PUBLIC_CHANNELS = [
   'videoOfflineDelete',
   'openExternalAuth',
   'installDesktopUpdate',
+  'applyDesktopUpdate',
+  'checkDesktopUpdate',
+  'getDesktopUpdateStatus',
 ];
 
 async function invokeDesktop(name, body) {
@@ -64,6 +67,17 @@ contextBridge.exposeInMainWorld('__KSTREAM_DESKTOP_IPC__', {
     };
     ipcRenderer.on('kstream:auth-callback', handler);
     return () => ipcRenderer.removeListener('kstream:auth-callback', handler);
+  },
+  onDesktopUpdate: (cb) => {
+    const handler = (_event, payload) => {
+      try {
+        cb(payload);
+      } catch (err) {
+        console.error('[kstream-desktop] desktop-update handler failed', err);
+      }
+    };
+    ipcRenderer.on('kstream:desktop-update', handler);
+    return () => ipcRenderer.removeListener('kstream:desktop-update', handler);
   },
 });
 

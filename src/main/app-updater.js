@@ -1,74 +1,158 @@
 'use strict';
 
-const { app, net } = require('electron');
+const { app, net, BrowserWindow } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const SETUP_URLS = [
-  'https://kdesa.stream/download/kstream-Setup.exe',
-  'https://github.com/kdesaFX/kstream-desktop/releases/latest/download/kstream-Setup.exe',
-];
+const SETUP_URLS = ['https://kdesa.stream/download/kstream-Setup.exe'];
 
 let configured = false;
-let pendingDownload = null;
+let getWindow = () => null;
+let setQuitting = () => {};
+let fallbackPromise = null;
+
+/** @type {{ phase: string, percent: number, version: string | null, error: string | null, setupPath: string | null }} */
+let status = {
+  phase: 'idle',
+  percent: 0,
+  version: null,
+  error: null,
+  setupPath: null,
+};
+
+function stateFilePath() {
+  return path.join(app.getPath('userData'), 'update-state.json');
+}
+
+function readPersisted() {
+  try {
+    return JSON.parse(fs.readFileSync(stateFilePath(), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function writePersisted(extra) {
+  try {
+    const prev = readPersisted();
+    const next = {
+      runningVersion: app.getVersion(),
+      phase: status.phase,
+      version: status.version,
+      setupPath: status.setupPath || null,
+      pendingApply: Boolean(extra?.pendingApply ?? prev.pendingApply),
+      updatedAt: Date.now(),
+    };
+    fs.writeFileSync(stateFilePath(), JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+}
+
+function publicStatus() {
+  const { setupPath: _setupPath, ...payload } = status;
+  return payload;
+}
+
+function broadcast() {
+  const payload = publicStatus();
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send('kstream:desktop-update', payload);
+    }
+  }
+}
+
+function setStatus(partial) {
+  status = { ...status, ...partial };
+  writePersisted();
+  broadcast();
+}
+
+function hydrateFromDisk() {
+  const prev = readPersisted();
+  const running = app.getVersion();
+  if (prev.pendingApply) {
+    const applied =
+      typeof prev.runningVersion === 'string' &&
+      prev.runningVersion !== running;
+    writePersisted({ pendingApply: false });
+    if (!applied) {
+      status.phase = 'idle';
+      status.error = null;
+    }
+  }
+  if (prev.setupPath && fs.existsSync(prev.setupPath)) {
+    status.setupPath = prev.setupPath;
+    status.phase = 'ready';
+    status.percent = 100;
+    status.version = prev.version || status.version;
+    status.error = null;
+  }
+}
 
 function configureAutoUpdater() {
   if (configured) return;
   configured = true;
 
-  autoUpdater.autoDownload = false;
+  autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.autoRunAppAfterInstall = true;
   autoUpdater.verifyUpdateCodeSignature = false;
 
+  autoUpdater.on('checking-for-update', () => {
+    if (status.phase === 'ready') return;
+    setStatus({ phase: 'checking', error: null });
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    setStatus({
+      phase: 'downloading',
+      percent: status.percent || 0,
+      version: info?.version || status.version,
+      error: null,
+    });
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    if (status.phase === 'ready' || status.phase === 'downloading') return;
+    setStatus({ phase: 'idle', percent: 0, error: null });
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    const percent = Math.max(
+      0,
+      Math.min(100, Math.round(Number(progress?.percent) || 0)),
+    );
+    setStatus({
+      phase: 'downloading',
+      percent,
+      error: null,
+    });
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    setStatus({
+      phase: 'ready',
+      percent: 100,
+      version: info?.version || status.version,
+      error: null,
+    });
+  });
+
   autoUpdater.on('error', (err) => {
     console.warn('[kstream-desktop] updater error', err?.message || err);
-  });
-}
-
-function setupBackgroundCheck() {
-  if (!app.isPackaged) {
-    console.log('[kstream-desktop] skipping auto-updater in dev');
-    return;
-  }
-
-  configureAutoUpdater();
-
-  setTimeout(() => {
-    autoUpdater.checkForUpdates().catch((err) => {
-      console.warn('[kstream-desktop] update check failed', err?.message || err);
+    if (status.phase === 'ready') return;
+    if (status.phase === 'downloading') {
+      void startSilentSetupFallback();
+      return;
+    }
+    setStatus({
+      phase: 'idle',
+      error: null,
     });
-  }, 15000);
-}
-
-function waitForEvent(eventName, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      autoUpdater.removeListener(eventName, onEvent);
-      autoUpdater.removeListener('error', onError);
-      reject(new Error(`Timed out waiting for ${eventName}`));
-    }, timeoutMs);
-
-    const cleanup = () => {
-      clearTimeout(timer);
-      autoUpdater.removeListener(eventName, onEvent);
-      autoUpdater.removeListener('error', onError);
-    };
-
-    function onEvent(info) {
-      cleanup();
-      resolve(info);
-    }
-
-    function onError(err) {
-      cleanup();
-      reject(err);
-    }
-
-    autoUpdater.once(eventName, onEvent);
-    autoUpdater.once('error', onError);
   });
 }
 
@@ -76,11 +160,12 @@ function setupDestPath() {
   return path.join(app.getPath('temp'), 'kstream-Setup.exe');
 }
 
-function writeWebStreamToFile(webStream, dest) {
+function writeWebStreamToFile(webStream, dest, onBytes) {
   return new Promise((resolve, reject) => {
     const writer = fs.createWriteStream(dest);
     writer.on('error', reject);
     const reader = webStream.getReader();
+    let received = 0;
 
     const pump = () => {
       reader
@@ -90,6 +175,8 @@ function writeWebStreamToFile(webStream, dest) {
             writer.end();
             return;
           }
+          received += value.byteLength;
+          onBytes(received);
           const chunk = Buffer.from(value);
           if (writer.write(chunk)) {
             pump();
@@ -118,7 +205,18 @@ async function downloadLatestSetup() {
         lastError = new Error(`Could not download updater (${res.status})`);
         continue;
       }
-      await writeWebStreamToFile(res.body, dest);
+      const total = Number(res.headers.get('content-length') || 0);
+      await writeWebStreamToFile(res.body, dest, (received) => {
+        const percent =
+          total > 0
+            ? Math.max(0, Math.min(99, Math.round((received / total) * 100)))
+            : Math.min(99, status.percent);
+        setStatus({
+          phase: 'downloading',
+          percent,
+          error: null,
+        });
+      });
       const size = fs.statSync(dest).size;
       if (size < 1_000_000) {
         lastError = new Error('Updater download looks incomplete');
@@ -142,7 +240,8 @@ async function downloadLatestSetup() {
   throw lastError;
 }
 
-function launchSetupAndQuit(exePath, setQuitting) {
+function launchSetupAndQuit(exePath) {
+  writePersisted({ pendingApply: true });
   setQuitting();
   const child = spawn(exePath, ['/S'], {
     detached: true,
@@ -150,8 +249,118 @@ function launchSetupAndQuit(exePath, setQuitting) {
     windowsHide: true,
   });
   child.unref();
-  // Give the setup process a moment to start before we unlock our own exe.
   setTimeout(() => app.quit(), 400);
+}
+
+async function startSilentSetupFallback() {
+  if (fallbackPromise) return fallbackPromise;
+  if (status.phase === 'ready') return null;
+
+  fallbackPromise = (async () => {
+    setStatus({
+      phase: 'downloading',
+      percent: Math.max(status.percent, 1),
+      error: null,
+    });
+    try {
+      const dest = await downloadLatestSetup();
+      setStatus({
+        phase: 'ready',
+        percent: 100,
+        error: null,
+        setupPath: dest,
+      });
+    } catch (err) {
+      console.warn(
+        '[kstream-desktop] silent updater download failed',
+        err?.message || err,
+      );
+      setStatus({
+        phase: 'error',
+        error: 'Could not download the update. Try again later.',
+      });
+    } finally {
+      fallbackPromise = null;
+    }
+  })();
+
+  return fallbackPromise;
+}
+
+function setupBackgroundCheck(windowGetter, quittingSetter) {
+  getWindow = windowGetter || getWindow;
+  setQuitting = quittingSetter || setQuitting;
+
+  if (!app.isPackaged) {
+    console.log('[kstream-desktop] skipping auto-updater in dev');
+    return;
+  }
+
+  configureAutoUpdater();
+  hydrateFromDisk();
+
+  const check = () => {
+    autoUpdater.checkForUpdates().catch((err) => {
+      console.warn('[kstream-desktop] update check failed', err?.message || err);
+    });
+  };
+
+  setTimeout(check, 12_000);
+  setInterval(check, 30 * 60 * 1000);
+}
+
+function getDesktopUpdateStatus() {
+  return publicStatus();
+}
+
+async function checkDesktopUpdate() {
+  if (!app.isPackaged) {
+    return { ...publicStatus(), phase: 'idle', error: 'dev' };
+  }
+  configureAutoUpdater();
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (err) {
+    console.warn('[kstream-desktop] update check failed', err?.message || err);
+    await startSilentSetupFallback();
+  }
+  return publicStatus();
+}
+
+async function applyDesktopUpdate(quittingSetter) {
+  if (quittingSetter) setQuitting = quittingSetter;
+  if (!app.isPackaged) {
+    return { ok: false, error: 'dev' };
+  }
+
+  if (status.setupPath && fs.existsSync(status.setupPath)) {
+    launchSetupAndQuit(status.setupPath);
+    return { ok: true, via: 'installer' };
+  }
+
+  if (status.phase !== 'ready') {
+    await checkDesktopUpdate();
+  }
+
+  if (status.setupPath && fs.existsSync(status.setupPath)) {
+    launchSetupAndQuit(status.setupPath);
+    return { ok: true, via: 'installer' };
+  }
+
+  if (status.phase === 'ready') {
+    writePersisted({ pendingApply: true });
+    setQuitting();
+    autoUpdater.quitAndInstall(false, true);
+    return { ok: true, via: 'electron-updater' };
+  }
+
+  await startSilentSetupFallback();
+  if (status.setupPath && fs.existsSync(status.setupPath)) {
+    launchSetupAndQuit(status.setupPath);
+    return { ok: true, via: 'installer' };
+  }
+
+  return { ok: false, error: status.error || 'not-ready' };
 }
 
 function isKstreamSetupDownload(filename, url) {
@@ -160,62 +369,49 @@ function isKstreamSetupDownload(filename, url) {
   return name.includes('kstream-setup') || href.includes('kstream-setup.exe');
 }
 
-function attachInstallerDownloadHandler(sess, setQuitting) {
+function attachInstallerDownloadHandler(sess, quittingSetter) {
+  if (quittingSetter) setQuitting = quittingSetter;
   if (!sess || sess.__kstreamSetupDownloadHook) return;
   sess.__kstreamSetupDownloadHook = true;
   sess.on('will-download', (_event, item) => {
     if (!isKstreamSetupDownload(item.getFilename(), item.getURL())) return;
     const dest = setupDestPath();
     item.setSavePath(dest);
+    setStatus({ phase: 'downloading', percent: 1, error: null });
+    item.on('updated', (_e, state) => {
+      if (state !== 'progressing') return;
+      const received = item.getReceivedBytes();
+      const total = item.getTotalBytes();
+      const percent =
+        total > 0
+          ? Math.max(1, Math.min(99, Math.round((received / total) * 100)))
+          : status.percent;
+      setStatus({ phase: 'downloading', percent, error: null });
+    });
     item.once('done', (_e, state) => {
       if (state === 'completed') {
-        launchSetupAndQuit(dest, setQuitting);
+        setStatus({
+          phase: 'ready',
+          percent: 100,
+          error: null,
+          setupPath: dest,
+        });
+      } else {
+        setStatus({
+          phase: 'error',
+          error: 'Could not download the update. Try again later.',
+        });
       }
     });
   });
 }
 
-/**
- * User clicked Update. NSIS installs use electron-updater (no Save As).
- * If that path is unavailable, download Setup and run it silently — the
- * installer wipes leftover app files first.
- */
-async function installDesktopUpdate(setQuitting) {
-  if (!app.isPackaged) {
-    return { ok: false, error: 'dev' };
-  }
-
-  if (pendingDownload) return pendingDownload;
-
-  pendingDownload = (async () => {
-    configureAutoUpdater();
-    try {
-      const downloaded = waitForEvent('update-downloaded', 60 * 1000);
-      await autoUpdater.checkForUpdates();
-      await autoUpdater.downloadUpdate();
-      await downloaded;
-      setQuitting();
-      autoUpdater.quitAndInstall(false, true);
-      return { ok: true, via: 'electron-updater' };
-    } catch (err) {
-      console.warn(
-        '[kstream-desktop] in-app updater unavailable, launching installer',
-        err?.message || err,
-      );
-      const setup = await downloadLatestSetup();
-      launchSetupAndQuit(setup, setQuitting);
-      return { ok: true, via: 'installer' };
-    } finally {
-      pendingDownload = null;
-    }
-  })();
-
-  return pendingDownload;
-}
-
 module.exports = {
   setupBackgroundCheck,
-  installDesktopUpdate,
+  checkDesktopUpdate,
+  applyDesktopUpdate,
+  getDesktopUpdateStatus,
+  installDesktopUpdate: applyDesktopUpdate,
   attachInstallerDownloadHandler,
   isKstreamSetupDownload,
 };

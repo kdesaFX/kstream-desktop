@@ -15,7 +15,9 @@ const path = require('path');
 const { handlers, setupInterceptors, CHROME_UA } = require('./ipc-handlers');
 const {
   setupBackgroundCheck,
-  installDesktopUpdate,
+  applyDesktopUpdate,
+  checkDesktopUpdate,
+  getDesktopUpdateStatus,
   attachInstallerDownloadHandler,
   isKstreamSetupDownload,
 } = require('./app-updater');
@@ -75,6 +77,7 @@ const {
 
 // Must run before userData / store is touched.
 configurePortableUserData();
+app.setAppUserModelId('com.kdesafx.kstream');
 
 // Discord RPC / native pipes can emit errors that would otherwise kill Electron.
 process.on('uncaughtException', (err) => {
@@ -264,9 +267,7 @@ function createTray(win) {
     {
       label: 'Check for updates',
       click: () => {
-        installDesktopUpdate(() => {
-          isQuitting = true;
-        }).catch((err) => {
+        checkDesktopUpdate().catch((err) => {
           console.warn('[kstream-desktop] update check failed', err);
         });
       },
@@ -517,10 +518,17 @@ function registerIpc() {
   }));
 
   ipcMain.handle('installDesktopUpdate', async () =>
-    installDesktopUpdate(() => {
+    applyDesktopUpdate(() => {
       isQuitting = true;
     }),
   );
+  ipcMain.handle('applyDesktopUpdate', async () =>
+    applyDesktopUpdate(() => {
+      isQuitting = true;
+    }),
+  );
+  ipcMain.handle('checkDesktopUpdate', async () => checkDesktopUpdate());
+  ipcMain.handle('getDesktopUpdateStatus', async () => getDesktopUpdateStatus());
 
   ipcMain.handle('tmdbCacheGet', async (_event, body) => {
     const key = body?.key;
@@ -584,9 +592,7 @@ function registerIpc() {
       throw new Error('Missing OAuth URL');
     }
     if (isKstreamSetupDownload('', url)) {
-      return installDesktopUpdate(() => {
-        isQuitting = true;
-      });
+      return checkDesktopUpdate();
     }
     await shell.openExternal(url);
     return { ok: true };
@@ -751,7 +757,12 @@ async function fetchReleaseDateFromPage(tmdbId, mediaType) {
 }
 
 function setupAutoUpdater() {
-  setupBackgroundCheck();
+  setupBackgroundCheck(
+    () => mainWindow,
+    () => {
+      isQuitting = true;
+    },
+  );
 }
 
 const gotLock = app.requestSingleInstanceLock();
