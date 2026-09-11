@@ -6,8 +6,10 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const SETUP_URL =
-  'https://github.com/kdesaFX/kstream-desktop/releases/latest/download/kstream-Setup.exe';
+const SETUP_URLS = [
+  'https://kdesa.stream/download/kstream-Setup.exe',
+  'https://github.com/kdesaFX/kstream-desktop/releases/latest/download/kstream-Setup.exe',
+];
 
 let configured = false;
 let pendingDownload = null;
@@ -18,8 +20,8 @@ function configureAutoUpdater() {
 
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
-  // Unsigned and Azure-signed builds both need to apply updates.
   autoUpdater.autoRunAppAfterInstall = true;
+  autoUpdater.verifyUpdateCodeSignature = false;
 
   autoUpdater.on('error', (err) => {
     console.warn('[kstream-desktop] updater error', err?.message || err);
@@ -70,35 +72,70 @@ function waitForEvent(eventName, timeoutMs) {
   });
 }
 
+function setupDestPath() {
+  return path.join(app.getPath('temp'), 'kstream-Setup.exe');
+}
+
 async function downloadLatestSetup() {
-  const dest = path.join(app.getPath('temp'), 'kstream-Setup.exe');
-  const res = await net.fetch(SETUP_URL, { redirect: 'follow' });
-  if (!res.ok) {
-    throw new Error(`Could not download updater (${res.status})`);
+  const dest = setupDestPath();
+  let lastError = new Error('Could not download updater');
+  for (const url of SETUP_URLS) {
+    try {
+      const res = await net.fetch(url, { redirect: 'follow' });
+      if (!res.ok) {
+        lastError = new Error(`Could not download updater (${res.status})`);
+        continue;
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length < 1_000_000) {
+        lastError = new Error('Updater download looks incomplete');
+        continue;
+      }
+      fs.writeFileSync(dest, buf);
+      return dest;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
   }
-  const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.length < 1_000_000) {
-    throw new Error('Updater download looks incomplete');
-  }
-  fs.writeFileSync(dest, buf);
-  return dest;
+  throw lastError;
 }
 
 function launchSetupAndQuit(exePath, setQuitting) {
   setQuitting();
-  const child = spawn(exePath, [], {
+  const child = spawn(exePath, ['/S'], {
     detached: true,
     stdio: 'ignore',
-    windowsHide: false,
+    windowsHide: true,
   });
   child.unref();
   app.quit();
 }
 
+function isKstreamSetupDownload(filename, url) {
+  const name = String(filename || '').toLowerCase();
+  const href = String(url || '').toLowerCase();
+  return name.includes('kstream-setup') || href.includes('kstream-setup.exe');
+}
+
+function attachInstallerDownloadHandler(sess, setQuitting) {
+  if (!sess || sess.__kstreamSetupDownloadHook) return;
+  sess.__kstreamSetupDownloadHook = true;
+  sess.on('will-download', (_event, item) => {
+    if (!isKstreamSetupDownload(item.getFilename(), item.getURL())) return;
+    const dest = setupDestPath();
+    item.setSavePath(dest);
+    item.once('done', (_e, state) => {
+      if (state === 'completed') {
+        launchSetupAndQuit(dest, setQuitting);
+      }
+    });
+  });
+}
+
 /**
  * User clicked Update in the web UI.
  * Prefer electron-updater (NSIS). Portable / missing latest.yml falls back
- * to downloading kstream-Setup.exe and launching it.
+ * to downloading kstream-Setup.exe and launching it silently.
  */
 async function installDesktopUpdate(setQuitting) {
   if (!app.isPackaged) {
@@ -136,4 +173,6 @@ async function installDesktopUpdate(setQuitting) {
 module.exports = {
   setupBackgroundCheck,
   installDesktopUpdate,
+  attachInstallerDownloadHandler,
+  isKstreamSetupDownload,
 };

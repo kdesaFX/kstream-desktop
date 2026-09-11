@@ -13,7 +13,12 @@ const {
 } = require('electron');
 const path = require('path');
 const { handlers, setupInterceptors, CHROME_UA } = require('./ipc-handlers');
-const { setupBackgroundCheck, installDesktopUpdate } = require('./app-updater');
+const {
+  setupBackgroundCheck,
+  installDesktopUpdate,
+  attachInstallerDownloadHandler,
+  isKstreamSetupDownload,
+} = require('./app-updater');
 const SimpleStore = require('./storage');
 const {
   configurePortableUserData,
@@ -578,6 +583,11 @@ function registerIpc() {
     if (!url || typeof url !== 'string') {
       throw new Error('Missing OAuth URL');
     }
+    if (isKstreamSetupDownload('', url)) {
+      return installDesktopUpdate(() => {
+        isQuitting = true;
+      });
+    }
     await shell.openExternal(url);
     return { ok: true };
   });
@@ -792,6 +802,9 @@ if (!gotLock) {
     migrateStreamUrl();
 
     setupInterceptors(session.defaultSession, { getStreamHostname });
+    attachInstallerDownloadHandler(session.defaultSession, () => {
+      isQuitting = true;
+    });
     registerIpc();
     registerSetupIpc();
 
