@@ -7,7 +7,10 @@ const fs = require('fs');
 const path = require('path');
 const { getInstallDir } = require('./install');
 
-const SETUP_URLS = ['https://kdesa.stream/download/kstream-Setup.exe'];
+const SETUP_URLS = [
+  'https://github.com/kdesaFX/kstream-desktop/releases/latest/download/kstream-Setup.exe',
+  'https://kdesa.stream/download/kstream-Setup.exe',
+];
 
 let configured = false;
 let getWindow = () => null;
