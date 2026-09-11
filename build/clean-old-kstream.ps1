@@ -1,8 +1,10 @@
-# Wipe previous kstream app installs so Setup can land a clean latest copy.
-# Keeps roaming user data (login / bookmarks) under %APPDATA%\kstream.
-# -Finalize <installDir> rewrites shortcuts and does not kill/wipe the new install.
+# Kill old kstream, wipe portable leftovers. Do NOT delete %LOCALAPPDATA%\Programs\kstream
+# so a cancelled wizard cannot leave the user with no app. NSIS overwrites INSTDIR.
+# -Finalize <installDir> rewrites shortcuts. -Launch <installDir> starts kstream.exe detached.
 param(
-  [string]$Finalize = ''
+  [string]$Finalize = '',
+  [string]$Launch = '',
+  [switch]$KillOnly
 )
 
 $ErrorActionPreference = 'SilentlyContinue'
@@ -72,6 +74,14 @@ function Stop-KstreamApp {
   }
 }
 
+if ($Launch) {
+  $exe = Join-Path $Launch 'kstream.exe'
+  if (Test-Path -LiteralPath $exe) {
+    Start-Process -FilePath $exe -WorkingDirectory $Launch
+  }
+  exit 0
+}
+
 if ($Finalize) {
   $exe = Join-Path $Finalize 'kstream.exe'
   Write-KstreamShortcut (Join-Path $env:USERPROFILE 'Desktop\kstream.lnk') $exe
@@ -108,23 +118,12 @@ Get-KstreamExeProcesses | ForEach-Object {
 Stop-KstreamApp
 Start-Sleep -Milliseconds 400
 
-Get-KstreamExeProcesses | ForEach-Object {
-  if ($_.ExecutablePath) {
-    $dirs.Add([string](Split-Path $_.ExecutablePath -Parent))
-  }
-}
+# Portable extract leftovers only — never delete the installed app folder.
+Remove-TreeRetry (Join-Path $env:TEMP 'kstream-portable')
+Remove-TreeRetry (Join-Path $env:LOCALAPPDATA 'Temp\kstream-portable')
+Remove-TreeRetry (Join-Path $env:LOCALAPPDATA 'kstream-updater')
 
-foreach ($name in @('kstream', 'kstream.bak', 'kstream-portable')) {
-  $dirs.Add((Join-Path $env:LOCALAPPDATA "Programs\$name"))
-}
-
-Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs') -Directory -ErrorAction SilentlyContinue |
-  Where-Object { $_.Name -like 'kstream*' } |
-  ForEach-Object { $dirs.Add($_.FullName) }
-
-$dirs.Add((Join-Path $env:TEMP 'kstream-portable'))
-$dirs.Add((Join-Path $env:LOCALAPPDATA 'Temp\kstream-portable'))
-$dirs.Add((Join-Path $env:LOCALAPPDATA 'kstream-updater'))
+if ($KillOnly) { exit 0 }
 
 $uninstallRoot = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
 Get-ChildItem $uninstallRoot -ErrorAction SilentlyContinue | ForEach-Object {
@@ -142,7 +141,10 @@ Get-ChildItem $uninstallRoot -ErrorAction SilentlyContinue | ForEach-Object {
   Remove-Item $_.PSPath -Recurse -Force
 }
 
+$installDir = [string](Join-Path $env:LOCALAPPDATA 'Programs\kstream')
 foreach ($dir in ($dirs | Select-Object -Unique)) {
+  if (-not $dir) { continue }
+  if ($dir.TrimEnd('\') -ieq $installDir.TrimEnd('\')) { continue }
   if (-not (Test-KstreamAppDir $dir)) { continue }
   Remove-TreeRetry $dir
 }
