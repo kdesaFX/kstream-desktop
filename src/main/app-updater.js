@@ -57,7 +57,7 @@ function writePersisted(extra) {
 
 function publicStatus() {
   const { setupPath: _setupPath, ...payload } = status;
-  return payload;
+  return { ...payload, runningVersion: app.getVersion() };
 }
 
 function broadcast() {
@@ -75,24 +75,61 @@ function setStatus(partial) {
   broadcast();
 }
 
+function sameAppVersion(a, b) {
+  const left = String(a || '')
+    .trim()
+    .replace(/^v/i, '');
+  const right = String(b || '')
+    .trim()
+    .replace(/^v/i, '');
+  return Boolean(left) && left === right;
+}
+
+function discardStaleSetup(filePath) {
+  if (!filePath) return;
+  try {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch {
+    // ignore
+  }
+}
+
 function hydrateFromDisk() {
   const prev = readPersisted();
   const running = app.getVersion();
-  if (prev.pendingApply) {
-    const applied =
-      typeof prev.runningVersion === 'string' &&
-      prev.runningVersion !== running;
+  const applied =
+    Boolean(prev.pendingApply) &&
+    typeof prev.runningVersion === 'string' &&
+    prev.runningVersion !== running;
+  const alreadyOnTarget = sameAppVersion(prev.version, running);
+
+  if (applied || alreadyOnTarget) {
+    discardStaleSetup(prev.setupPath);
+    status = {
+      phase: 'idle',
+      percent: 0,
+      version: null,
+      error: null,
+      setupPath: null,
+    };
     writePersisted({ pendingApply: false });
-    if (!applied) {
-      status.phase = 'idle';
-      status.error = null;
-    }
+    return;
   }
-  if (prev.setupPath && fs.existsSync(prev.setupPath)) {
+
+  if (prev.pendingApply) {
+    writePersisted({ pendingApply: false });
+  }
+
+  if (
+    prev.setupPath &&
+    fs.existsSync(prev.setupPath) &&
+    prev.version &&
+    !sameAppVersion(prev.version, running)
+  ) {
     status.setupPath = prev.setupPath;
     status.phase = 'ready';
     status.percent = 100;
-    status.version = prev.version || status.version;
+    status.version = prev.version;
     status.error = null;
   }
 }
@@ -138,10 +175,20 @@ function configureAutoUpdater() {
   });
 
   autoUpdater.on('update-downloaded', (info) => {
+    const next = info?.version || status.version;
+    if (sameAppVersion(next, app.getVersion())) {
+      setStatus({
+        phase: 'idle',
+        percent: 0,
+        error: null,
+        setupPath: null,
+      });
+      return;
+    }
     setStatus({
       phase: 'ready',
       percent: 100,
-      version: info?.version || status.version,
+      version: next,
       error: null,
     });
   });
