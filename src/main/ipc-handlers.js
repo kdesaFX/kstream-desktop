@@ -114,8 +114,44 @@ function getMakeFullUrl(url, body) {
   return u.toString();
 }
 
+function isBinaryContentType(contentType) {
+  const ct = String(contentType || '').toLowerCase();
+  if (!ct) return false;
+  if (
+    ct.includes('json') ||
+    ct.includes('text/') ||
+    ct.includes('xml') ||
+    ct.includes('javascript') ||
+    ct.includes('mpegurl') ||
+    ct.includes('html')
+  ) {
+    return false;
+  }
+  return (
+    ct.includes('octet-stream') ||
+    ct.includes('wasm') ||
+    ct.includes('grpc') ||
+    ct.includes('binary')
+  );
+}
+
 function mapBodyToNetBody(body, bodyType, headers) {
   if (body == null) return null;
+
+  if (bodyType === 'binary') {
+    if (typeof body === 'string') return Buffer.from(body, 'base64');
+    if (Buffer.isBuffer(body)) return body;
+    if (body instanceof Uint8Array) return Buffer.from(body);
+    if (body instanceof ArrayBuffer) return Buffer.from(body);
+  }
+
+  if (Buffer.isBuffer(body)) return body;
+  if (typeof Uint8Array !== 'undefined' && body instanceof Uint8Array) {
+    return Buffer.from(body);
+  }
+  if (typeof ArrayBuffer !== 'undefined' && body instanceof ArrayBuffer) {
+    return Buffer.from(body);
+  }
 
   if (bodyType === 'FormData') {
     const params = new URLSearchParams();
@@ -224,6 +260,7 @@ function netRequest(url, { method = 'GET', headers = {}, body = null, timeoutMs 
             [].concat(response.headers['content-type'])[0]) ||
           '';
         let parsedBody;
+        let bodyEncoding = 'utf8';
         const text = buf.toString('utf8');
         if (String(contentType).includes('application/json')) {
           try {
@@ -231,6 +268,9 @@ function netRequest(url, { method = 'GET', headers = {}, body = null, timeoutMs 
           } catch {
             parsedBody = text;
           }
+        } else if (isBinaryContentType(contentType)) {
+          parsedBody = buf.toString('base64');
+          bodyEncoding = 'base64';
         } else {
           parsedBody = text;
         }
@@ -245,6 +285,7 @@ function netRequest(url, { method = 'GET', headers = {}, body = null, timeoutMs 
           headers: responseHeaders,
           finalUrl,
           body: parsedBody,
+          bodyEncoding,
           rawHeaders: response.headers,
         });
       });
@@ -412,6 +453,7 @@ const handlers = {
           headers: responseHeaders,
           finalUrl,
           body: response.body,
+          bodyEncoding: response.bodyEncoding || 'utf8',
         },
       };
     } catch (err) {
