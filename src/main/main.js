@@ -43,6 +43,7 @@ const {
   setLogPath,
 } = require('./discord-rpc');
 const { resolveWebRoot, startLocalServer } = require('./local-server');
+const { migrateGuestLocalStorage } = require('./origin-migrate');
 const { runNetworkCheck } = require('./network-check');
 const {
   registerAuthProtocol,
@@ -115,6 +116,7 @@ const store = new SimpleStore({
   defaults: {
     windowBounds: { width: 1280, height: 800 },
     streamUrl: REMOTE_STREAM_URL,
+    localUiPort: 18765,
     closeToTray: true,
     runMode: null,
   },
@@ -127,6 +129,9 @@ let showingSetup = false;
 /** @type {{ origin: string, close: () => Promise<void> } | null} */
 let localServer = null;
 let defaultStreamUrl = ENV_STREAM_URL || REMOTE_STREAM_URL;
+/** Origins to copy guest localStorage from after the first UI load. */
+let pendingStorageOrigins = [];
+let guestStorageInjected = false;
 
 function isLocalOriginUrl(url) {
   try {
@@ -238,8 +243,17 @@ async function ensureLocalServer() {
     return null;
   }
   if (localServer) return localServer;
-  localServer = await startLocalServer({ webRoot });
+  const previousUrl = store.get('streamUrl', '');
+  const preferredPort = Number(store.get('localUiPort', 18765)) || 18765;
+  localServer = await startLocalServer({ webRoot, preferredPort });
+  store.set('localUiPort', localServer.port);
   defaultStreamUrl = localServer.origin;
+  pendingStorageOrigins = [
+    previousUrl,
+    REMOTE_STREAM_URL,
+    'https://www.kdesa.stream',
+    'https://kstream.lol',
+  ];
   return localServer;
 }
 
@@ -414,6 +428,19 @@ function createMainWindow() {
 
   mainWindow.webContents.on('did-finish-load', () => {
     flushPendingAuthCallback(mainWindow);
+    if (guestStorageInjected || showingSetup) return;
+    guestStorageInjected = true;
+    const current = getStreamUrl();
+    void migrateGuestLocalStorage(mainWindow, pendingStorageOrigins, current)
+      .then((wrote) => {
+        if (wrote > 0 && mainWindow && !mainWindow.isDestroyed()) {
+          console.log('[kstream-desktop] restored', wrote, 'guest settings keys');
+          mainWindow.reload();
+        }
+      })
+      .catch((err) => {
+        console.warn('[kstream-desktop] guest storage migrate failed', err?.message || err);
+      });
   });
 
   mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {

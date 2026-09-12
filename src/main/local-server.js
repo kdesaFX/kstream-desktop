@@ -336,18 +336,39 @@ function resolveWebRoot() {
   return null;
 }
 
+const STABLE_UI_PORTS = [18765, 18766, 18767, 18768, 18769];
+
+function listenOnPort(server, port) {
+  return new Promise((resolve, reject) => {
+    const onError = (err) => {
+      server.off('listening', onListen);
+      reject(err);
+    };
+    const onListen = () => {
+      server.off('error', onError);
+      resolve();
+    };
+    server.once('error', onError);
+    server.once('listening', onListen);
+    server.listen(port, '127.0.0.1');
+  });
+}
+
 /**
- * Start a local server on 127.0.0.1 with a free port.
+ * Start a local server on a stable 127.0.0.1 port so Chromium localStorage
+ * (settings, watch progress) survives relaunch/update.
  * @returns {Promise<{ server: import('http').Server, port: number, origin: string, webRoot: string, close: () => Promise<void> }>}
  */
-function startLocalServer(options = {}) {
+async function startLocalServer(options = {}) {
   const webRoot = options.webRoot || resolveWebRoot();
   if (!webRoot) {
-    return Promise.reject(new Error('No bundled web root found'));
+    throw new Error('No bundled web root found');
   }
 
-  return new Promise((resolve, reject) => {
-    const server = http.createServer((req, res) => {
+  const preferred = Number(options.preferredPort) || STABLE_UI_PORTS[0];
+  const ports = [preferred, ...STABLE_UI_PORTS.filter((p) => p !== preferred)];
+
+  const server = http.createServer((req, res) => {
       try {
         const host = req.headers.host || '127.0.0.1';
         const requestUrl = new URL(req.url || '/', `http://${host}`);
@@ -392,24 +413,33 @@ function startLocalServer(options = {}) {
       }
     });
 
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      const port = typeof address === 'object' && address ? address.port : 0;
-      const origin = `http://127.0.0.1:${port}`;
-      console.log('[kstream-desktop] local UI server', origin, '→', webRoot);
-      resolve({
-        server,
-        port,
-        origin,
-        webRoot,
-        close: () =>
-          new Promise((resClose, rejClose) => {
-            server.close((err) => (err ? rejClose(err) : resClose()));
-          }),
-      });
-    });
-  });
+  let lastErr;
+  for (const port of ports) {
+    try {
+      await listenOnPort(server, port);
+      lastErr = null;
+      break;
+    } catch (err) {
+      lastErr = err;
+      if (err && err.code !== 'EADDRINUSE') throw err;
+    }
+  }
+  if (lastErr && !server.listening) throw lastErr;
+
+  const address = server.address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+  const origin = `http://127.0.0.1:${port}`;
+  console.log('[kstream-desktop] local UI server', origin, '→', webRoot);
+  return {
+    server,
+    port,
+    origin,
+    webRoot,
+    close: () =>
+      new Promise((resClose, rejClose) => {
+        server.close((err) => (err ? rejClose(err) : resClose()));
+      }),
+  };
 }
 
 module.exports = {
