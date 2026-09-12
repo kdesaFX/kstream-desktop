@@ -18,6 +18,7 @@ const {
   serveOfflineVideo,
 } = require('./video-offline');
 const { handleM3u8Proxy, handleTsProxy } = require('./hls-proxy');
+const { withPublicDns } = require('./public-dns');
 
 const DEFAULT_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:93.0) Gecko/20100101 Firefox/93.0';
@@ -178,11 +179,11 @@ function proxyFetch(target, method, headers, body) {
     const lib = target.protocol === 'https:' ? https : http;
     const req = lib.request(
       target,
-      {
+      withPublicDns({
         method,
         headers,
         timeout: 30_000,
-      },
+      }),
       (upstream) => {
         const chunks = [];
         upstream.on('data', (chunk) => chunks.push(chunk));

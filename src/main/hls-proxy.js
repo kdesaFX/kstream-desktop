@@ -8,6 +8,7 @@
 
 const http = require('http');
 const https = require('https');
+const { withPublicDns } = require('./public-dns');
 
 const DEFAULT_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:93.0) Gecko/20100101 Firefox/93.0';
@@ -275,7 +276,7 @@ function fetchBuffer(target, headers) {
     const lib = target.protocol === 'https:' ? https : http;
     const req = lib.request(
       target,
-      { method: 'GET', headers, timeout: 30_000 },
+      withPublicDns({ method: 'GET', headers, timeout: 30_000 }),
       (upstream) => {
         const chunks = [];
         upstream.on('data', (chunk) => chunks.push(chunk));
@@ -385,7 +386,7 @@ function handleTsProxy(req, res, requestUrl) {
     const lib = target.protocol === 'https:' ? https : http;
     const upstreamReq = lib.request(
       target,
-      { method: 'GET', headers: upstreamHeaders, timeout: 60_000 },
+      withPublicDns({ method: 'GET', headers: upstreamHeaders, timeout: 60_000 }),
       (upstream) => {
         const upstreamType = String(upstream.headers['content-type'] || '').toLowerCase();
         const remapHtmlTs =
