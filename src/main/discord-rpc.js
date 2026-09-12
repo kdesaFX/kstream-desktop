@@ -72,6 +72,8 @@ let logPath = null;
 let watchdogTimer = null;
 let reconnectTimer = null;
 let refreshTimer = null;
+/** Skip Discord keep-alives while the window is in the tray. */
+let presenceSuspended = false;
 /** One session clock for Discord's elapsed timer (browsing → watching). */
 let sessionStartedAt = null;
 
@@ -490,6 +492,7 @@ function startWatchdog() {
 
   if (!refreshTimer) {
     refreshTimer = setInterval(() => {
+      if (presenceSuspended) return;
       if (!ready || !rpc || !pendingBody) return;
       lastPayloadKey = '';
       flushPending(true).catch(() => {});
@@ -529,10 +532,15 @@ function shutdownDiscordPresence() {
   destroyClient('shutdown');
 }
 
+function setPresenceSuspended(suspended) {
+  presenceSuspended = !!suspended;
+}
+
 module.exports = {
   DISCORD_CLIENT_ID,
   updateDiscordPresence,
   startDiscordPresence,
   shutdownDiscordPresence,
+  setPresenceSuspended,
   setLogPath,
 };

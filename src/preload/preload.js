@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
 const PUBLIC_CHANNELS = [
   'hello',
@@ -46,6 +46,24 @@ contextBridge.exposeInMainWorld('__KSTREAM_DESKTOP_IPC__', {
     };
     ipcRenderer.on('kstream:pause-for-close', handler);
     return () => ipcRenderer.removeListener('kstream:pause-for-close', handler);
+  },
+  onWindowIdle: (cb) => {
+    const handler = (_event, payload) => {
+      try {
+        cb(payload || { idle: false, hidden: false, minimized: false });
+      } catch (err) {
+        console.error('[kstream-desktop] window-idle handler failed', err);
+      }
+    };
+    ipcRenderer.on('kstream:window-idle', handler);
+    return () => ipcRenderer.removeListener('kstream:window-idle', handler);
+  },
+  trimRendererMemory: () => {
+    try {
+      webFrame.clearCache();
+    } catch (err) {
+      console.warn('[kstream-desktop] trimRendererMemory failed', err);
+    }
   },
   onOpenOffline: (cb) => {
     const handler = () => {

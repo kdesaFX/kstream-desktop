@@ -40,6 +40,7 @@ const {
   updateDiscordPresence,
   startDiscordPresence,
   shutdownDiscordPresence,
+  setPresenceSuspended,
   setLogPath,
 } = require('./discord-rpc');
 const { resolveWebRoot, startLocalServer } = require('./local-server');
@@ -95,6 +96,12 @@ process.on('unhandledRejection', (reason) => {
 // Look like Chrome, not Electron — many CDNs/WAFs block Electron UAs.
 app.userAgentFallback = CHROME_UA;
 
+// Throttle timers/composites when the window is occluded or in the tray.
+app.commandLine.appendSwitch(
+  'enable-features',
+  'CalculateNativeWinOcclusion,IntensiveWakeUpThrottling',
+);
+
 const PRELOAD = path.join(__dirname, '..', 'preload', 'preload.js');
 const SETUP_PRELOAD = path.join(__dirname, '..', 'preload', 'setup-preload.js');
 const WELCOME_HTML = path.join(__dirname, '..', 'renderer', 'welcome', 'index.html');
@@ -126,6 +133,7 @@ let mainWindow = null;
 let tray = null;
 let isQuitting = false;
 let showingSetup = false;
+let idleTrimTimer = null;
 /** @type {{ origin: string, close: () => Promise<void> } | null} */
 let localServer = null;
 let defaultStreamUrl = ENV_STREAM_URL || REMOTE_STREAM_URL;
@@ -361,6 +369,52 @@ function createSetupWindow() {
   return mainWindow;
 }
 
+function syncWindowIdleState() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  let hidden = false;
+  let minimized = false;
+  try {
+    hidden = !mainWindow.isVisible();
+    minimized = mainWindow.isMinimized();
+  } catch {
+    return;
+  }
+  const idle = hidden || minimized;
+  try {
+    mainWindow.webContents.setBackgroundThrottling(true);
+  } catch {
+    // ignore
+  }
+  try {
+    mainWindow.webContents.send('kstream:window-idle', {
+      idle,
+      hidden,
+      minimized,
+    });
+  } catch (err) {
+    console.warn('[kstream-desktop] window-idle send failed', err);
+  }
+  try {
+    setPresenceSuspended(hidden);
+  } catch {
+    // ignore
+  }
+  if (idleTrimTimer) {
+    clearTimeout(idleTrimTimer);
+    idleTrimTimer = null;
+  }
+  if (!hidden) return;
+  idleTrimTimer = setTimeout(() => {
+    idleTrimTimer = null;
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isVisible()) return;
+    try {
+      mainWindow.webContents.invalidate();
+    } catch {
+      // ignore
+    }
+  }, 8000);
+}
+
 function createMainWindow() {
   showingSetup = false;
   const bounds = store.get('windowBounds', { width: 1280, height: 800 });
@@ -384,6 +438,7 @@ function createMainWindow() {
       nodeIntegration: false,
       sandbox: false,
       spellcheck: false,
+      backgroundThrottling: true,
     },
   });
 
@@ -399,6 +454,11 @@ function createMainWindow() {
     mainWindow.show();
   });
 
+  mainWindow.on('minimize', () => syncWindowIdleState());
+  mainWindow.on('restore', () => syncWindowIdleState());
+  mainWindow.on('hide', () => syncWindowIdleState());
+  mainWindow.on('show', () => syncWindowIdleState());
+
   mainWindow.on('close', (event) => {
     // X button (and Alt+F4): pause playback. Minimize does not hit this path.
     try {
@@ -412,6 +472,7 @@ function createMainWindow() {
     if (!isQuitting && store.get('closeToTray', true)) {
       event.preventDefault();
       mainWindow.hide();
+      syncWindowIdleState();
     } else {
       const { width, height, x, y } = mainWindow.getBounds();
       store.set('windowBounds', { width, height, x, y });
