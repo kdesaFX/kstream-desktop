@@ -64,6 +64,7 @@ module.exports = {
     output: 'dist',
   },
   npmRebuild: false,
+  asarUnpack: ['node_modules/@ffmpeg-installer/**'],
   publish: {
     provider: 'github',
     owner: 'kdesaFX',

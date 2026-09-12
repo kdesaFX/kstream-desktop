@@ -12,11 +12,44 @@ let libraryRoot = null;
 const activeDownloads = new Map();
 
 function resolveFfmpegPath() {
+  let bin = 'ffmpeg';
   try {
-    return require('@ffmpeg-installer/ffmpeg').path;
+    bin = require('@ffmpeg-installer/ffmpeg').path;
   } catch {
-    return 'ffmpeg';
+    /* fall through to PATH */
   }
+  if (bin.includes(`${path.sep}app.asar${path.sep}`)) {
+    bin = bin.replace(
+      `${path.sep}app.asar${path.sep}`,
+      `${path.sep}app.asar.unpacked${path.sep}`,
+    );
+  }
+  if (bin !== 'ffmpeg' && !fs.existsSync(bin)) {
+    const err = new Error(
+      'ffmpeg is missing from this desktop build. Update kstream to download HLS offline.',
+    );
+    err.code = 'ENOENT';
+    throw err;
+  }
+  return bin;
+}
+
+function parseClockToSeconds(clock) {
+  const parts = String(clock).trim().split(':');
+  if (parts.length < 2) return 0;
+  const sec = Number(parts.pop());
+  const min = Number(parts.pop() || 0);
+  const hr = Number(parts.pop() || 0);
+  if (![hr, min, sec].every((n) => Number.isFinite(n))) return 0;
+  return hr * 3600 + min * 60 + sec;
+}
+
+function updateDownloadProgress(id, ratio) {
+  const current = readMeta(id);
+  if (!current || current.status !== 'downloading') return;
+  const next = Math.max(0, Math.min(0.99, Number(ratio) || 0));
+  if (Math.abs((current.progress || 0) - next) < 0.01) return;
+  writeMeta(id, { ...current, progress: next });
 }
 
 function initVideoOffline(userDataPath) {
@@ -120,7 +153,21 @@ function isHlsUrl(url) {
 
 function runFfmpegDownload(id, url, headers, outputPath) {
   return new Promise((resolve, reject) => {
-    const args = ['-hide_banner', '-loglevel', 'error', '-nostats'];
+    let ffmpegBin;
+    try {
+      ffmpegBin = resolveFfmpegPath();
+    } catch (err) {
+      reject(err);
+      return;
+    }
+
+    const args = [
+      '-hide_banner',
+      '-nostdin',
+      '-nostats',
+      '-progress',
+      'pipe:1',
+    ];
     const headerArg = buildHeaderArg(headers);
     if (headerArg) args.push('-headers', headerArg);
     args.push(
@@ -136,16 +183,38 @@ function runFfmpegDownload(id, url, headers, outputPath) {
       outputPath,
     );
 
-    const proc = spawn(resolveFfmpegPath(), args, { windowsHide: true });
+    const proc = spawn(ffmpegBin, args, { windowsHide: true });
     activeDownloads.set(id, { process: proc, meta: readMeta(id) });
 
     let stderr = '';
+    let durationSec = 0;
     proc.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
+      if (!durationSec) {
+        const match = text.match(/Duration:\s*(\d+:\d+:\d+(?:\.\d+)?)/);
+        if (match) durationSec = parseClockToSeconds(match[1]);
+      }
+    });
+    proc.stdout.on('data', (chunk) => {
+      const text = chunk.toString();
+      const timeMatch = text.match(/out_time_ms=(\d+)/);
+      if (timeMatch && durationSec > 0) {
+        const played = Number(timeMatch[1]) / 1_000_000;
+        updateDownloadProgress(id, played / durationSec);
+      }
     });
 
     proc.on('error', (err) => {
       activeDownloads.delete(id);
+      if (err && err.code === 'ENOENT') {
+        reject(
+          new Error(
+            'ffmpeg is missing from this desktop build. Update kstream to download HLS offline.',
+          ),
+        );
+        return;
+      }
       reject(err);
     });
 
