@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const PUBLIC_CHANNELS = [
   'hello',
   'makeRequest',
+  'scrapeCinejoy',
   'prepareStream',
   'openPage',
   'updateMediaMetadata',

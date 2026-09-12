@@ -1,6 +1,7 @@
 'use strict';
 
 const { session, net } = require('electron');
+const { scrapeCinejoy } = require('./cinejoy-scrape');
 
 // --- Constants & Utils ---
 
@@ -371,6 +372,15 @@ const handlers = {
       allowed: true,
       hasPermission: true,
     };
+  },
+
+  async scrapeCinejoy(body) {
+    try {
+      return await scrapeCinejoy(body || {});
+    } catch (err) {
+      console.error('scrapeCinejoy error:', err);
+      return null;
+    }
   },
 
   async openPage(body) {
