@@ -81,6 +81,20 @@ function sendJson(res, data, status = 200) {
   res.end(body);
 }
 
+function readProxyDestination(requestUrl) {
+  const encoded = requestUrl.searchParams.get('d');
+  if (encoded) {
+    try {
+      const b64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+      return Buffer.from(padded, 'base64').toString('utf8');
+    } catch {
+      return null;
+    }
+  }
+  return requestUrl.searchParams.get('destination');
+}
+
 function assertSafeDestination(raw) {
   let parsed;
   try {
@@ -201,7 +215,7 @@ async function handleProxy(req, res, requestUrl) {
   }
 
   try {
-    const destination = requestUrl.searchParams.get('destination');
+    const destination = readProxyDestination(requestUrl);
     if (!destination) {
       sendJson(res, { error: 'Missing destination query parameter' }, 400);
       return;
