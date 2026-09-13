@@ -34,6 +34,7 @@ jobs:
           repository: kdesaFX/kstream
           ref: production
           path: kstream-web
+          token: ${{ secrets.KSTREAM_WORKFLOW_TOKEN }}
 
       - name: Checkout providers
         uses: actions/checkout@v4
