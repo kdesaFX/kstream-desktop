@@ -62,8 +62,11 @@ jobs:
           Push-Location providers-src
           pnpm install
           pnpm run build
+          pnpm pack --pack-destination ..
           Pop-Location
-          node -e "const fs=require('fs'); const p='kstream-web/package.json'; const pkg=JSON.parse(fs.readFileSync(p,'utf8')); pkg.dependencies['@p-stream/providers']='file:../providers-src'; fs.writeFileSync(p, JSON.stringify(pkg,null,2)+'\n');"
+          $providerPackage = (Get-ChildItem -Path . -Filter "p-stream-providers-*.tgz" | Select-Object -First 1).Name
+          if (-not $providerPackage) { throw "Provider package was not packed" }
+          node -e "const fs=require('fs'); const provider=process.argv[1]; const p='kstream-web/package.json'; const pkg=JSON.parse(fs.readFileSync(p,'utf8')); pkg.dependencies['@p-stream/providers']='file:../'+provider; fs.writeFileSync(p, JSON.stringify(pkg,null,2)+'\n');" $providerPackage
           if (Test-Path kstream-web/pnpm-lock.yaml) { Remove-Item -Force kstream-web/pnpm-lock.yaml }
 
       - name: Install kstream web dependencies
