@@ -34,7 +34,6 @@ jobs:
           repository: kdesaFX/kstream
           ref: production
           path: kstream-web
-          token: ${{ secrets.KSTREAM_WORKFLOW_TOKEN }}
 
       - name: Checkout providers
         uses: actions/checkout@v4
@@ -70,11 +69,13 @@ jobs:
         working-directory: kstream-web
         env:
           PUPPETEER_SKIP_DOWNLOAD: '1'
-        run: pnpm install
+        # Parent kstream-desktop/package.json would otherwise steal this install
+        # (pnpm walks up and writes node_modules next to desktop, leaving vite missing).
+        run: pnpm install --ignore-workspace
 
       - name: Build kstream web
         working-directory: kstream-web
-        run: pnpm build
+        run: pnpm exec vite build
         env:
           VITE_APP_DOMAIN: http://127.0.0.1
           VITE_NORMAL_ROUTER: 'true'
