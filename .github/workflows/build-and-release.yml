@@ -62,7 +62,7 @@ jobs:
           Push-Location providers-src
           pnpm install --ignore-workspace
           pnpm exec vite build
-          pnpm pack --ignore-scripts --pack-destination ..
+          pnpm pack --pack-destination ..
           Pop-Location
           $providerPackage = (Get-ChildItem -Path . -Filter "p-stream-providers-*.tgz" | Select-Object -First 1).Name
           if (-not $providerPackage) { throw "Provider package was not packed" }
