@@ -75,7 +75,7 @@ const TITLE_BAR_OPTIONS = process.platform === 'win32'
       titleBarOverlay: {
         color: '#00000000',
         symbolColor: '#ffffff',
-        height: 32,
+        height: 40,
       },
     }
   : {
@@ -88,8 +88,8 @@ const DESKTOP_CHROME_CSS = `
     position: fixed;
     top: 0;
     left: 0;
-    right: 138px;
-    height: 32px;
+    right: 176px;
+    height: 40px;
     -webkit-app-region: drag;
     z-index: 2147483647;
   }
