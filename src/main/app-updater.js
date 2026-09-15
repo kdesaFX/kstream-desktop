@@ -420,10 +420,13 @@ async function checkDesktopUpdate() {
   return publicStatus();
 }
 
-async function applyDesktopUpdate(quittingSetter) {
+async function applyDesktopUpdate(quittingSetter, options = {}) {
   if (quittingSetter) setQuitting = quittingSetter;
   if (!app.isPackaged) {
     return { ok: false, error: 'dev' };
+  }
+  if (!options.userInitiated) {
+    return { ok: false, error: 'user-action-required' };
   }
 
   // Never quitAndInstall — that opens the NSIS wizard. Always run Setup silently.

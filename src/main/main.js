@@ -643,15 +643,15 @@ function registerIpc() {
     tmdbCache: getTmdbCacheStats(),
   }));
 
-  ipcMain.handle('installDesktopUpdate', async () =>
+  ipcMain.handle('installDesktopUpdate', async (_event, body) =>
     applyDesktopUpdate(() => {
       isQuitting = true;
-    }),
+    }, body || {}),
   );
-  ipcMain.handle('applyDesktopUpdate', async () =>
+  ipcMain.handle('applyDesktopUpdate', async (_event, body) =>
     applyDesktopUpdate(() => {
       isQuitting = true;
-    }),
+    }, body || {}),
   );
   ipcMain.handle('checkDesktopUpdate', async () => checkDesktopUpdate());
   ipcMain.handle('getDesktopUpdateStatus', async () => getDesktopUpdateStatus());

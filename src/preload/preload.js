@@ -25,6 +25,10 @@ const PUBLIC_CHANNELS = [
   'getDesktopUpdateStatus',
 ];
 
+const MESSAGE_RELAY_CHANNELS = PUBLIC_CHANNELS.filter(
+  (name) => name !== 'installDesktopUpdate' && name !== 'applyDesktopUpdate',
+);
+
 async function invokeDesktop(name, body) {
   if (!PUBLIC_CHANNELS.includes(name)) {
     throw new Error(`Blocked desktop channel: ${name}`);
@@ -106,7 +110,7 @@ window.addEventListener('message', async (event) => {
 
   const data = event.data;
   if (!data || !data.name || data.relayed) return;
-  if (!PUBLIC_CHANNELS.includes(data.name)) return;
+  if (!MESSAGE_RELAY_CHANNELS.includes(data.name)) return;
 
   try {
     const response = await invokeDesktop(data.name, data.body);
