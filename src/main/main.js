@@ -68,6 +68,32 @@ const {
   getOfflineChapterPages,
   hasOfflineChapter,
 } = require('./manga-offline');
+
+const TITLE_BAR_OPTIONS = process.platform === 'win32'
+  ? {
+      titleBarStyle: 'hidden',
+      titleBarOverlay: {
+        color: '#00000000',
+        symbolColor: '#ffffff',
+        height: 32,
+      },
+    }
+  : {
+      titleBarStyle: 'hiddenInset',
+    };
+
+const DESKTOP_CHROME_CSS = `
+  html::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 138px;
+    height: 32px;
+    -webkit-app-region: drag;
+    z-index: 2147483647;
+  }
+`;
 const {
   initVideoOffline,
   startVideoDownload,
@@ -333,6 +359,7 @@ function createSetupWindow() {
     center: true,
     autoHideMenuBar: true,
     backgroundColor: '#030303',
+    ...TITLE_BAR_OPTIONS,
     icon: iconPath || undefined,
     title: 'kstream',
     webPreferences: {
@@ -350,6 +377,7 @@ function createSetupWindow() {
   mainWindow.webContents.setVisualZoomLevelLimits(1, 1).catch(() => {});
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow.webContents.setZoomFactor(1);
+    mainWindow.webContents.insertCSS(DESKTOP_CHROME_CSS).catch(() => {});
   });
 
   mainWindow.once('ready-to-show', () => {
@@ -430,6 +458,7 @@ function createMainWindow() {
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#0b1220',
+    ...TITLE_BAR_OPTIONS,
     icon: iconPath || undefined,
     title: 'kstream',
     webPreferences: {
@@ -488,6 +517,7 @@ function createMainWindow() {
   });
 
   mainWindow.webContents.on('did-finish-load', () => {
+    mainWindow.webContents.insertCSS(DESKTOP_CHROME_CSS).catch(() => {});
     flushPendingAuthCallback(mainWindow);
     if (guestStorageInjected || showingSetup) return;
     guestStorageInjected = true;
