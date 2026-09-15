@@ -409,7 +409,7 @@ function syncWindowIdleState() {
   }
   const idle = hidden || minimized;
   try {
-    mainWindow.webContents.setBackgroundThrottling(true);
+    mainWindow.webContents.setBackgroundThrottling(false);
   } catch {
     // ignore
   }
@@ -467,7 +467,7 @@ function createMainWindow() {
       nodeIntegration: false,
       sandbox: false,
       spellcheck: false,
-      backgroundThrottling: true,
+      backgroundThrottling: false,
     },
   });
 
@@ -487,6 +487,13 @@ function createMainWindow() {
   mainWindow.on('restore', () => syncWindowIdleState());
   mainWindow.on('hide', () => syncWindowIdleState());
   mainWindow.on('show', () => syncWindowIdleState());
+  mainWindow.on('focus', () => {
+    try {
+      mainWindow.webContents.invalidate();
+    } catch {
+      // ignore
+    }
+  });
 
   mainWindow.on('close', (event) => {
     // X button (and Alt+F4): pause playback. Minimize does not hit this path.
