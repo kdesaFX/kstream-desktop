@@ -96,9 +96,26 @@ function closeOAuthChildWindow(webContents) {
 function routeOAuthExternally(event, url, webContents) {
   if (!shouldOpenAuthExternally(url)) return false;
   if (event?.preventDefault) event.preventDefault();
-  void shell.openExternal(url);
+  void shell.openExternal(normalizeDesktopOAuthUrl(url));
   closeOAuthChildWindow(webContents);
   return true;
+}
+
+function normalizeDesktopOAuthUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (
+      (host === 'supabase.co' || host.endsWith('.supabase.co')) &&
+      parsed.pathname.includes('/auth/v1/authorize')
+    ) {
+      parsed.searchParams.set('redirect_to', AUTH_CALLBACK_PREFIX);
+      return parsed.toString();
+    }
+  } catch {
+    // keep original URL
+  }
+  return url;
 }
 
 function attachAuthNavigationGuards(webContents) {
@@ -139,4 +156,5 @@ module.exports = {
   installGlobalAuthGuards,
   setMainWebContents,
   isAuthCallbackUrl,
+  normalizeDesktopOAuthUrl,
 };

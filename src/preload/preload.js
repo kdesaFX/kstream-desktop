@@ -23,6 +23,9 @@ const PUBLIC_CHANNELS = [
   'applyDesktopUpdate',
   'checkDesktopUpdate',
   'getDesktopUpdateStatus',
+  'windowControl:minimize',
+  'windowControl:toggleMaximize',
+  'windowControl:close',
 ];
 
 const MESSAGE_RELAY_CHANNELS = PUBLIC_CHANNELS.filter(

@@ -55,6 +55,7 @@ const {
   attachAuthNavigationGuards,
   installGlobalAuthGuards,
   setMainWebContents,
+  normalizeDesktopOAuthUrl,
 } = require('./auth-protocol');
 const {
   initTmdbCache,
@@ -71,12 +72,7 @@ const {
 
 const TITLE_BAR_OPTIONS = process.platform === 'win32'
   ? {
-      titleBarStyle: 'hidden',
-      titleBarOverlay: {
-        color: '#00000000',
-        symbolColor: '#ffffff',
-        height: 32,
-      },
+      frame: false,
     }
   : {
       titleBarStyle: 'hiddenInset',
@@ -88,11 +84,84 @@ const DESKTOP_CHROME_CSS = `
     position: fixed;
     top: 0;
     left: 0;
-    right: 148px;
+    right: 108px;
     height: 32px;
     -webkit-app-region: drag;
     z-index: 2147483647;
   }
+
+  #kstream-window-controls {
+    position: fixed;
+    top: 0;
+    right: 0;
+    z-index: 2147483647;
+    display: flex;
+    height: 32px;
+    -webkit-app-region: no-drag;
+  }
+
+  .kstream-window-control {
+    width: 36px;
+    height: 32px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.82);
+    font: 18px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    -webkit-app-region: no-drag;
+  }
+
+  .kstream-window-control:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+  }
+
+  .kstream-window-control-close:hover {
+    background: #c42b1c;
+  }
+`;
+
+const DESKTOP_CHROME_JS = `
+(() => {
+  if (window.__KSTREAM_DESKTOP_CONTROLS__) return;
+  window.__KSTREAM_DESKTOP_CONTROLS__ = true;
+
+  const send = (channel) => {
+    window.__KSTREAM_DESKTOP_IPC__?.invoke?.(channel).catch(() => {});
+  };
+
+  const createButton = (className, label, title, channel) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'kstream-window-control ' + className;
+    button.textContent = label;
+    button.title = title;
+    button.setAttribute('aria-label', title);
+    button.addEventListener('click', () => send(channel));
+    return button;
+  };
+
+  const mount = () => {
+    if (document.getElementById('kstream-window-controls')) return;
+    const controls = document.createElement('div');
+    controls.id = 'kstream-window-controls';
+    controls.append(
+      createButton('', '\\u2013', 'Minimize', 'windowControl:minimize'),
+      createButton('', '\\u25a1', 'Maximize', 'windowControl:toggleMaximize'),
+      createButton('kstream-window-control-close', '\\u00d7', 'Close', 'windowControl:close'),
+    );
+    document.documentElement.appendChild(controls);
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', mount, { once: true });
+  } else {
+    mount();
+  }
+})();
 `;
 const {
   initVideoOffline,
@@ -378,6 +447,7 @@ function createSetupWindow() {
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow.webContents.setZoomFactor(1);
     mainWindow.webContents.insertCSS(DESKTOP_CHROME_CSS).catch(() => {});
+    mainWindow.webContents.executeJavaScript(DESKTOP_CHROME_JS).catch(() => {});
   });
 
   mainWindow.once('ready-to-show', () => {
@@ -525,6 +595,7 @@ function createMainWindow() {
 
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow.webContents.insertCSS(DESKTOP_CHROME_CSS).catch(() => {});
+    mainWindow.webContents.executeJavaScript(DESKTOP_CHROME_JS).catch(() => {});
     flushPendingAuthCallback(mainWindow);
     if (guestStorageInjected || showingSetup) return;
     guestStorageInjected = true;
@@ -655,6 +726,24 @@ function registerIpc() {
   );
   ipcMain.handle('checkDesktopUpdate', async () => checkDesktopUpdate());
   ipcMain.handle('getDesktopUpdateStatus', async () => getDesktopUpdateStatus());
+  ipcMain.handle('windowControl:minimize', async (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+    return { ok: true };
+  });
+  ipcMain.handle('windowControl:toggleMaximize', async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) return { ok: false };
+    if (window.isMaximized()) {
+      window.unmaximize();
+    } else if (window.isMaximizable()) {
+      window.maximize();
+    }
+    return { ok: true };
+  });
+  ipcMain.handle('windowControl:close', async (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close();
+    return { ok: true };
+  });
 
   ipcMain.handle('tmdbCacheGet', async (_event, body) => {
     const key = body?.key;
@@ -720,7 +809,7 @@ function registerIpc() {
     if (isKstreamSetupDownload('', url)) {
       return checkDesktopUpdate();
     }
-    await shell.openExternal(url);
+    await shell.openExternal(normalizeDesktopOAuthUrl(url));
     return { ok: true };
   });
 
