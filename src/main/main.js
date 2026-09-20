@@ -106,7 +106,7 @@ const DESKTOP_CHROME_CSS = `
   #kstream-window-controls {
     position: fixed;
     top: 0;
-    right: 0;
+    right: 36px;
     z-index: 2147483647;
     display: flex;
     height: 32px;
