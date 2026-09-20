@@ -568,9 +568,8 @@ function createMainWindow() {
 
   mainWindow.setMenuBarVisibility(false);
 
-  if (store.get('windowMaximized', true)) {
-    mainWindow.maximize();
-  }
+  // The desktop app should always occupy the full work area on launch.
+  mainWindow.maximize();
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
