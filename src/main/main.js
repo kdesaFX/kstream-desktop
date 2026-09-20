@@ -135,6 +135,11 @@ const DESKTOP_CHROME_CSS = `
   .kstream-window-control-close:hover {
     background: #c42b1c;
   }
+
+  .kstream-window-control-close {
+    font-size: 22px;
+    line-height: 32px;
+  }
 `;
 
 const DESKTOP_CHROME_JS = `
@@ -230,6 +235,7 @@ const store = new SimpleStore({
   configName: 'user-preferences',
   defaults: {
     windowBounds: { width: 1280, height: 800 },
+    windowMaximized: true,
     streamUrl: REMOTE_STREAM_URL,
     localUiPort: 18765,
     closeToTray: true,
@@ -562,12 +568,18 @@ function createMainWindow() {
 
   mainWindow.setMenuBarVisibility(false);
 
+  if (store.get('windowMaximized', true)) {
+    mainWindow.maximize();
+  }
+
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
   });
 
   mainWindow.on('minimize', () => syncWindowIdleState());
   mainWindow.on('restore', () => syncWindowIdleState());
+  mainWindow.on('maximize', () => store.set('windowMaximized', true));
+  mainWindow.on('unmaximize', () => store.set('windowMaximized', false));
   mainWindow.on('hide', () => syncWindowIdleState());
   mainWindow.on('show', () => syncWindowIdleState());
   mainWindow.on('focus', () => {
@@ -593,8 +605,11 @@ function createMainWindow() {
       mainWindow.hide();
       syncWindowIdleState();
     } else {
-      const { width, height, x, y } = mainWindow.getBounds();
-      store.set('windowBounds', { width, height, x, y });
+      store.set('windowMaximized', mainWindow.isMaximized());
+      if (!mainWindow.isMaximized()) {
+        const { width, height, x, y } = mainWindow.getBounds();
+        store.set('windowBounds', { width, height, x, y });
+      }
     }
   });
 
@@ -1079,8 +1094,11 @@ app.on('before-quit', () => {
     localServer = null;
   }
   if (mainWindow && !mainWindow.isDestroyed() && !showingSetup) {
-    const { width, height, x, y } = mainWindow.getBounds();
-    store.set('windowBounds', { width, height, x, y });
+    store.set('windowMaximized', mainWindow.isMaximized());
+    if (!mainWindow.isMaximized()) {
+      const { width, height, x, y } = mainWindow.getBounds();
+      store.set('windowBounds', { width, height, x, y });
+    }
   }
 });
 
