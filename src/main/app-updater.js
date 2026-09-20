@@ -30,6 +30,11 @@ function stateFilePath() {
   return path.join(app.getPath('userData'), 'update-state.json');
 }
 
+function hasPendingApplyForCurrentVersion() {
+  const prev = readPersisted();
+  return Boolean(prev.pendingApply) && prev.runningVersion === app.getVersion();
+}
+
 function readPersisted() {
   try {
     return JSON.parse(fs.readFileSync(stateFilePath(), 'utf8'));
@@ -487,6 +492,7 @@ function attachInstallerDownloadHandler(sess, quittingSetter) {
 
 module.exports = {
   setupBackgroundCheck,
+  hasPendingApplyForCurrentVersion,
   checkDesktopUpdate,
   applyDesktopUpdate,
   getDesktopUpdateStatus,

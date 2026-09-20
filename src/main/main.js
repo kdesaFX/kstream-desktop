@@ -15,6 +15,7 @@ const path = require('path');
 const { handlers, setupInterceptors, CHROME_UA } = require('./ipc-handlers');
 const {
   setupBackgroundCheck,
+  hasPendingApplyForCurrentVersion,
   applyDesktopUpdate,
   checkDesktopUpdate,
   getDesktopUpdateStatus,
@@ -656,6 +657,33 @@ function createMainWindow() {
   return mainWindow;
 }
 
+function createUpdateWaitWindow() {
+  const waitWindow = new BrowserWindow({
+    width: 360,
+    height: 220,
+    frame: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    closable: false,
+    alwaysOnTop: true,
+    show: false,
+    backgroundColor: '#20242b',
+    webPreferences: { contextIsolation: true, sandbox: true },
+  });
+  waitWindow.once('ready-to-show', () => waitWindow.show());
+  waitWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
+    <!doctype html><html><body style="margin:0;background:#20242b;color:#f5f7fa;font:600 16px Segoe UI,system-ui,sans-serif;display:grid;place-items:center;height:100vh;text-align:center">
+      <main><div style="font-size:28px;margin-bottom:18px">↻</div><div>Updating kstream...</div><div style="font-size:12px;font-weight:400;color:#aeb6c2;margin-top:8px">Please wait while the update finishes.</div></main>
+    </body></html>
+  `)}`);
+  setTimeout(() => {
+    if (!waitWindow.isDestroyed()) waitWindow.close();
+    app.quit();
+  }, 10000);
+}
+
 function openAppAfterSetup() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     showingSetup = false;
@@ -1065,7 +1093,9 @@ if (!gotLock) {
       ensureInstalledBranding();
     }
 
-    if (needsSetup(store)) {
+    if (hasPendingApplyForCurrentVersion()) {
+      createUpdateWaitWindow();
+    } else if (needsSetup(store)) {
       createSetupWindow();
     } else {
       createMainWindow();
