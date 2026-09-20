@@ -79,6 +79,19 @@ const TITLE_BAR_OPTIONS = process.platform === 'win32'
     };
 
 const DESKTOP_CHROME_CSS = `
+  html,
+  body {
+    overflow-y: auto !important;
+    scrollbar-width: none !important;
+  }
+
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar,
+  *::-webkit-scrollbar {
+    width: 0 !important;
+    height: 0 !important;
+  }
+
   html::before {
     content: "";
     position: fixed;
