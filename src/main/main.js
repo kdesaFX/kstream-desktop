@@ -600,9 +600,10 @@ function createUpdateWaitWindow() {
   });
   waitWindow.once('ready-to-show', () => waitWindow.show());
   waitWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
-    <!doctype html><html><body style="margin:0;background:#20242b;color:#f5f7fa;font:600 16px Segoe UI,system-ui,sans-serif;display:grid;place-items:center;height:100vh;text-align:center">
-      <main><div style="font-size:28px;margin-bottom:18px">↻</div><div>Updating kstream...</div><div style="font-size:12px;font-weight:400;color:#aeb6c2;margin-top:8px">Please wait while the update finishes.</div></main>
-    </body></html>
+    <!doctype html><html><head><style>
+      *{box-sizing:border-box}body{margin:0;background:#20242b;color:#f5f7fa;font:600 15px Segoe UI,system-ui,sans-serif;display:grid;place-items:center;height:100vh;text-align:center}
+      main{width:100%;padding:28px}.mark{width:48px;height:48px;margin:0 auto 18px;border:4px solid #46505d;border-top-color:#28c7b7;border-radius:50%;animation:spin 1s linear infinite}.title{font-size:16px}.detail{font-size:12px;font-weight:400;color:#aeb6c2;margin-top:9px}@keyframes spin{to{transform:rotate(360deg)}}
+    </style></head><body><main><div class="mark"></div><div class="title">Updating kstream...</div><div class="detail">Please wait while the update finishes.</div></main></body></html>
   `)}`);
   setTimeout(() => {
     if (!waitWindow.isDestroyed()) waitWindow.close();
