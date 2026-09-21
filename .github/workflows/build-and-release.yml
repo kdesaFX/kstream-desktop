@@ -150,22 +150,22 @@ jobs:
 
       - name: Upload to GitHub Release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
           echo "Uploading assets to $TAG"
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --title "kstream $TAG" --notes "kstream desktop Core release $TAG" --latest
+          if ! gh release view "$TAG" --repo kdesaFX/kstream-desktop-releases >/dev/null 2>&1; then
+            gh release create "$TAG" --repo kdesaFX/kstream-desktop-releases --title "kstream $TAG" --notes "kstream desktop release $TAG" --latest
           else
-            gh release edit "$TAG" --draft=false --latest || true
+            gh release edit "$TAG" --repo kdesaFX/kstream-desktop-releases --draft=false --latest || true
           fi
           for f in dist/*; do
             if [ -f "$f" ]; then
               echo "Uploading $(basename "$f")"
-              gh release upload "$TAG" "$f" --clobber
+              gh release upload "$TAG" "$f" --repo kdesaFX/kstream-desktop-releases --clobber
             fi
           done
-          gh release edit "$TAG" --draft=false --latest || true
+          gh release edit "$TAG" --repo kdesaFX/kstream-desktop-releases --draft=false --latest || true
 
       - name: Mirror installer to kstream R2 CDN
         env:

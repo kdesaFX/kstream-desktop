@@ -8,11 +8,12 @@ const path = require('path');
 const { getInstallDir } = require('./install');
 
 const SETUP_URLS = [
-  'https://github.com/kdesaFX/kstream-desktop/releases/latest/download/kstream-Setup.exe',
+  'https://github.com/kdesaFX/kstream-desktop-releases/releases/latest/download/kstream-Setup.exe',
   'https://kdesa.stream/download/kstream-Setup.exe',
 ];
 
 let configured = false;
+let manualCheck = false;
 let getWindow = () => null;
 let setQuitting = () => {};
 let fallbackPromise = null;
@@ -156,8 +157,8 @@ function configureAutoUpdater() {
 
   autoUpdater.on('update-available', (info) => {
     setStatus({
-      phase: 'downloading',
-      percent: status.percent || 0,
+      phase: manualCheck ? 'ready' : 'downloading',
+      percent: manualCheck ? 100 : status.percent || 0,
       version: info?.version || status.version,
       error: null,
     });
@@ -412,16 +413,22 @@ function getDesktopUpdateStatus() {
   return publicStatus();
 }
 
-async function checkDesktopUpdate() {
+async function checkDesktopUpdate(options = {}) {
   if (!app.isPackaged) {
     return { ...publicStatus(), phase: 'idle', error: 'dev' };
   }
   configureAutoUpdater();
+  const previousAutoDownload = autoUpdater.autoDownload;
+  manualCheck = options.manual === true;
+  if (manualCheck) autoUpdater.autoDownload = false;
   try {
     await autoUpdater.checkForUpdates();
   } catch (err) {
     console.warn('[kstream-desktop] update check failed', err?.message || err);
     await startSilentSetupFallback();
+  } finally {
+    manualCheck = false;
+    autoUpdater.autoDownload = previousAutoDownload;
   }
   return publicStatus();
 }

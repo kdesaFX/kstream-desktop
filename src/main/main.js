@@ -742,7 +742,9 @@ function registerIpc() {
       isQuitting = true;
     }, body || {}),
   );
-  ipcMain.handle('checkDesktopUpdate', async () => checkDesktopUpdate());
+  ipcMain.handle('checkDesktopUpdate', async (_event, body) =>
+    checkDesktopUpdate(body || {}),
+  );
   ipcMain.handle('getDesktopUpdateStatus', async () => getDesktopUpdateStatus());
   ipcMain.handle('windowControl:minimize', async (event) => {
     BrowserWindow.fromWebContents(event.sender)?.minimize();
