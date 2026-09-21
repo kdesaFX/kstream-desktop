@@ -313,7 +313,6 @@ function scheduleRelaunchAfterApply() {
     '  $running = @(Get-CimInstance Win32_Process -Filter "Name = \'kstream.exe\'" -ErrorAction SilentlyContinue)',
     '  $installed = $running | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.ToLower() -eq $exe.ToLower() }',
     '  if ($installed) { exit 0 }',
-    '  if ($running.Count -gt 0) { continue }',
     '  try {',
     '    Start-Process -FilePath $exe',
     '    exit 0',
