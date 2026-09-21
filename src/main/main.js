@@ -16,6 +16,7 @@ const { handlers, setupInterceptors, CHROME_UA } = require('./ipc-handlers');
 const {
   setupBackgroundCheck,
   hasPendingApplyForCurrentVersion,
+  checkDesktopUpdateAtStartup,
   applyDesktopUpdate,
   checkDesktopUpdate,
   getDesktopUpdateStatus,
@@ -611,6 +612,31 @@ function createUpdateWaitWindow() {
   }, 10000);
 }
 
+function createStartupWindow() {
+  const startupWindow = new BrowserWindow({
+    width: 360,
+    height: 220,
+    frame: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    closable: false,
+    alwaysOnTop: true,
+    show: false,
+    backgroundColor: '#20242b',
+    webPreferences: { contextIsolation: true, sandbox: true },
+  });
+  startupWindow.once('ready-to-show', () => startupWindow.show());
+  startupWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
+    <!doctype html><html><head><style>
+      *{box-sizing:border-box}body{margin:0;background:#20242b;color:#f5f7fa;font:600 15px Segoe UI,system-ui,sans-serif;display:grid;place-items:center;height:100vh;text-align:center}
+      main{width:100%;padding:28px}.mark{width:48px;height:48px;margin:0 auto 18px;border:4px solid #46505d;border-top-color:#28c7b7;border-radius:50%;animation:spin 1s linear infinite}.title{font-size:16px}.detail{font-size:12px;font-weight:400;color:#aeb6c2;margin-top:9px}@keyframes spin{to{transform:rotate(360deg)}}
+    </style></head><body><main><div class="mark"></div><div class="title">Starting kstream...</div><div class="detail">Checking for updates.</div></main></body></html>
+  `)}`);
+  return startupWindow;
+}
+
 function openAppAfterSetup() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     showingSetup = false;
@@ -1025,6 +1051,17 @@ if (!gotLock) {
     } else if (needsSetup(store)) {
       createSetupWindow();
     } else {
+      const startupWindow = app.isPackaged ? createStartupWindow() : null;
+      const startupStatus = app.isPackaged
+        ? await checkDesktopUpdateAtStartup()
+        : null;
+      if (startupStatus?.phase === 'ready') {
+        await applyDesktopUpdate(() => {
+          isQuitting = true;
+        }, { userInitiated: true });
+        return;
+      }
+      if (startupWindow && !startupWindow.isDestroyed()) startupWindow.close();
       createMainWindow();
       setupAutoUpdater();
       startDiscordPresence(app.getPath('userData'));

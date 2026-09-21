@@ -82,7 +82,10 @@ function readMeta(id) {
 
 function writeMeta(id, meta) {
   fs.mkdirSync(downloadDir(id), { recursive: true });
-  fs.writeFileSync(metaPath(id), JSON.stringify(meta, null, 2));
+  const target = metaPath(id);
+  const temp = `${target}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify(meta, null, 2));
+  fs.renameSync(temp, target);
 }
 
 function listDownloads() {
@@ -229,9 +232,50 @@ function runFfmpegDownload(id, url, headers, outputPath) {
   });
 }
 
-async function downloadDirectFile(id, url, headers, outputPath) {
-  const buf = await fetchBuffer(url, headers);
-  fs.writeFileSync(outputPath, buf);
+function downloadDirectFile(id, url, headers, outputPath) {
+  return new Promise((resolve, reject) => {
+    let lib;
+    let reqUrl;
+    try {
+      reqUrl = new URL(url);
+      lib = reqUrl.protocol === 'https:' ? https : http;
+    } catch (err) {
+      reject(err);
+      return;
+    }
+
+    const tempPath = `${outputPath}.part`;
+    const writer = fs.createWriteStream(tempPath);
+    const req = lib.request(reqUrl, { method: 'GET', headers, timeout: 120_000 }, (res) => {
+      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        writer.close();
+        fs.rmSync(tempPath, { force: true });
+        downloadDirectFile(id, new URL(res.headers.location, reqUrl).toString(), headers, outputPath)
+          .then(resolve, reject);
+        return;
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        reject(new Error(`HTTP ${res.statusCode || 'error'}`));
+        return;
+      }
+      const total = Number(res.headers['content-length'] || 0);
+      let received = 0;
+      res.on('data', (chunk) => {
+        received += chunk.length;
+        if (total > 0) updateDownloadProgress(id, received / total);
+      });
+      res.pipe(writer);
+      writer.once('finish', () => {
+        fs.rename(tempPath, outputPath, (err) => (err ? reject(err) : resolve()));
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('Download timed out')));
+    writer.on('error', reject);
+    req.end();
+  });
 }
 
 async function startVideoDownload(body) {
@@ -287,6 +331,7 @@ async function startVideoDownload(body) {
       writeMeta(id, next);
       try {
         if (fs.existsSync(output)) fs.unlinkSync(output);
+        if (fs.existsSync(`${output}.part`)) fs.unlinkSync(`${output}.part`);
       } catch {
         /* ignore */
       }

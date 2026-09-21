@@ -16,6 +16,7 @@ let configured = false;
 let getWindow = () => null;
 let setQuitting = () => {};
 let fallbackPromise = null;
+let startupCheckPromise = null;
 
 /** @type {{ phase: string, percent: number, version: string | null, error: string | null, setupPath: string | null }} */
 let status = {
@@ -425,6 +426,38 @@ async function checkDesktopUpdate() {
   return publicStatus();
 }
 
+/** Check before the main window opens, but never block startup indefinitely. */
+async function checkDesktopUpdateAtStartup(timeoutMs = 20_000) {
+  if (!app.isPackaged) return { ...publicStatus(), phase: 'idle', error: 'dev' };
+  if (startupCheckPromise) return startupCheckPromise;
+
+  configureAutoUpdater();
+  hydrateFromDisk();
+  if (status.phase === 'ready') return publicStatus();
+
+  startupCheckPromise = new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      autoUpdater.removeListener('update-not-available', finish);
+      autoUpdater.removeListener('update-downloaded', finish);
+      autoUpdater.removeListener('error', finish);
+      resolve(publicStatus());
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    autoUpdater.once('update-not-available', finish);
+    autoUpdater.once('update-downloaded', finish);
+    autoUpdater.once('error', finish);
+    autoUpdater.checkForUpdates().catch(finish);
+  }).finally(() => {
+    startupCheckPromise = null;
+  });
+
+  return startupCheckPromise;
+}
+
 async function applyDesktopUpdate(quittingSetter, options = {}) {
   if (quittingSetter) setQuitting = quittingSetter;
   if (!app.isPackaged) {
@@ -494,6 +527,7 @@ module.exports = {
   setupBackgroundCheck,
   hasPendingApplyForCurrentVersion,
   checkDesktopUpdate,
+  checkDesktopUpdateAtStartup,
   applyDesktopUpdate,
   getDesktopUpdateStatus,
   installDesktopUpdate: applyDesktopUpdate,
