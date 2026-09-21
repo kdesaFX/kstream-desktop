@@ -637,6 +637,16 @@ function createStartupWindow() {
   return startupWindow;
 }
 
+function closeStartupWindow(startupWindow) {
+  if (!startupWindow || startupWindow.isDestroyed()) return;
+  try {
+    startupWindow.hide();
+    startupWindow.destroy();
+  } catch {
+    // The window may already be closing during app startup.
+  }
+}
+
 function openAppAfterSetup() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     showingSetup = false;
@@ -1053,15 +1063,16 @@ if (!gotLock) {
     } else {
       const startupWindow = app.isPackaged ? createStartupWindow() : null;
       const startupStatus = app.isPackaged
-        ? await checkDesktopUpdateAtStartup()
+        ? await checkDesktopUpdateAtStartup(5_000)
         : null;
       if (startupStatus?.phase === 'ready') {
+        closeStartupWindow(startupWindow);
         await applyDesktopUpdate(() => {
           isQuitting = true;
         }, { userInitiated: true });
         return;
       }
-      if (startupWindow && !startupWindow.isDestroyed()) startupWindow.close();
+      closeStartupWindow(startupWindow);
       createMainWindow();
       setupAutoUpdater();
       startDiscordPresence(app.getPath('userData'));
