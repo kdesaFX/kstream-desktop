@@ -16,6 +16,40 @@ let configured = false;
 let getWindow = () => null;
 let setQuitting = () => {};
 let fallbackPromise = null;
+let updateWindow = null;
+
+function showUpdateWindow() {
+  const main = getWindow();
+  if (main && !main.isDestroyed()) main.hide();
+  if (updateWindow && !updateWindow.isDestroyed()) {
+    updateWindow.show();
+    updateWindow.focus();
+    return;
+  }
+  updateWindow = new BrowserWindow({
+    width: 600, height: 420, minWidth: 520, minHeight: 360,
+    frame: false, resizable: false, movable: true, show: false,
+    alwaysOnTop: true, backgroundColor: '#071014',
+    webPreferences: {
+      preload: path.join(app.getAppPath(), 'preload', 'preload.js'),
+      contextIsolation: true, nodeIntegration: false, sandbox: false,
+    },
+  });
+  updateWindow.on('closed', () => { updateWindow = null; });
+  updateWindow.webContents.on('did-finish-load', () => {
+    updateWindow.webContents.send('kstream:desktop-update', publicStatus());
+  });
+  updateWindow.loadFile(path.join(app.getAppPath(), 'renderer', 'update', 'index.html'));
+  updateWindow.once('ready-to-show', () => {
+    if (updateWindow && !updateWindow.isDestroyed()) updateWindow.show();
+  });
+}
+
+function hideUpdateWindow() {
+  if (updateWindow && !updateWindow.isDestroyed()) updateWindow.close();
+  const main = getWindow();
+  if (main && !main.isDestroyed()) { main.show(); main.focus(); }
+}
 
 /** @type {{ phase: string, percent: number, version: string | null, error: string | null, setupPath: string | null }} */
 let status = {
@@ -76,6 +110,8 @@ function broadcast() {
 
 function setStatus(partial) {
   status = { ...status, ...partial };
+  if (['checking', 'downloading', 'ready', 'error'].includes(status.phase)) showUpdateWindow();
+  if (status.phase === 'idle') hideUpdateWindow();
   writePersisted();
   broadcast();
 }
@@ -403,6 +439,7 @@ function setupBackgroundCheck(windowGetter, quittingSetter) {
 
   // Check only when the desktop app launches. Do not start background updates
   // while the user is already using the app.
+  showUpdateWindow();
   setTimeout(check, 1_000);
 }
 
