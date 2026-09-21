@@ -68,7 +68,7 @@ module.exports = {
   publish: {
     provider: 'github',
     owner: 'kdesaFX',
-    repo: 'kstream-desktop-releases',
+    repo: 'kstream-desktop',
   },
   files: ['src/**/*', 'logo.png', 'icon.ico', 'package.json'],
   extraFiles: [

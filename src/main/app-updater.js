@@ -8,7 +8,7 @@ const path = require('path');
 const { getInstallDir } = require('./install');
 
 const SETUP_URLS = [
-  'https://github.com/kdesaFX/kstream-desktop-releases/releases/latest/download/kstream-Setup.exe',
+  'https://github.com/kdesaFX/kstream-desktop/releases/latest/download/kstream-Setup.exe',
   'https://kdesa.stream/download/kstream-Setup.exe',
 ];
 
