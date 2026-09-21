@@ -630,9 +630,9 @@ function createStartupWindow() {
   startupWindow.once('ready-to-show', () => startupWindow.show());
   startupWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
     <!doctype html><html><head><style>
-      *{box-sizing:border-box}body{margin:0;background:#20242b;color:#f5f7fa;font:600 15px Segoe UI,system-ui,sans-serif;display:grid;place-items:center;height:100vh;text-align:center}
-      main{width:100%;padding:28px}.mark{width:48px;height:48px;margin:0 auto 18px;border:4px solid #46505d;border-top-color:#28c7b7;border-radius:50%;animation:spin 1s linear infinite}.title{font-size:16px}.detail{font-size:12px;font-weight:400;color:#aeb6c2;margin-top:9px}@keyframes spin{to{transform:rotate(360deg)}}
-    </style></head><body><main><div class="mark"></div><div class="title">Starting kstream...</div><div class="detail">Checking for updates.</div></main></body></html>
+      *{box-sizing:border-box}body{margin:0;background:#091313;color:#f7fbfa;font:500 14px Segoe UI,system-ui,sans-serif;display:grid;place-items:center;height:100vh;text-align:center}
+      main{width:100%;padding:25px 28px 23px}.brand{display:flex;align-items:center;justify-content:center;gap:9px;margin-bottom:22px;color:#62e3d4;font-size:19px;font-weight:700;letter-spacing:.2px}.brand-mark{width:25px;height:25px;border:3px solid #62e3d4;border-radius:50%;position:relative}.brand-mark:before,.brand-mark:after{content:"";position:absolute;inset:4px;border:2px solid #62e3d4;border-left-color:transparent;border-right-color:transparent;border-radius:50%}.brand-mark:after{inset:-5px;border-width:2px}.spinner{width:38px;height:38px;margin:0 auto 16px;border:3px solid #263e3d;border-top-color:#62e3d4;border-right-color:#27b9aa;border-radius:50%;animation:spin 850ms linear infinite}.title{font-size:15px;font-weight:650}.detail{font-size:12px;color:#8ea6a3;margin-top:8px}@keyframes spin{to{transform:rotate(360deg)}}
+    </style></head><body><main><div class="brand"><span class="brand-mark"></span><span>kstream</span></div><div class="spinner"></div><div class="title">Getting things ready</div><div class="detail">Checking for updates</div></main></body></html>
   `)}`);
   return startupWindow;
 }
