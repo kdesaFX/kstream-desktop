@@ -34,14 +34,14 @@ jobs:
           repository: kdesaFX/kstream
           ref: production
           path: kstream-web
-          token: ${{ secrets.KSTREAM_WORKFLOW_TOKEN }}
+          token: ${{ secrets.RELEASES_REPO_TOKEN }}
 
       - name: Checkout providers
         uses: actions/checkout@v4
         with:
           repository: kdesaFX/providers
           ref: production
-          ssh-key: ${{ secrets.PROVIDERS_DEPLOY_KEY }}
+          token: ${{ secrets.RELEASES_REPO_TOKEN }}
           path: providers-src
 
       - name: Setup Node.js
