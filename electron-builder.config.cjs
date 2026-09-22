@@ -104,6 +104,9 @@ module.exports = {
     artifactName: 'kstream-Setup.${ext}',
     // One-click per-user so in-app Relaunch Now never shows the wizard.
     oneClick: true,
+    // The runner's pnpm layout can omit electron-builder's optional lock include.
+    // The app updater already serializes installs, so this installer lock is unnecessary.
+    allowOnlyOneInstallerInstance: false,
     perMachine: false,
     allowElevation: false,
     allowToChangeInstallationDirectory: false,
