@@ -110,12 +110,7 @@ jobs:
             $includeDirs = Get-ChildItem -Path node_modules\.pnpm -Recurse -Directory -Filter include -ErrorAction SilentlyContinue |
               Where-Object { $_.FullName -match 'app-builder-lib.*templates\\nsis\\include$' }
             if (-not $includeDirs) { throw "electron-builder NSIS include directory is missing" }
-            $fallback = @'
-!macro ALLOW_ONLY_ONE_INSTALLER_INSTANCE
-!macroend
-!macro CHECK_APP_RUNNING
-!macroend
-'@
+            $fallback = "!macro ALLOW_ONLY_ONE_INSTALLER_INSTANCE`n!macroend`n!macro CHECK_APP_RUNNING`n!macroend`n"
             foreach ($dir in $includeDirs) {
               Set-Content -LiteralPath (Join-Path $dir.FullName 'allowOnlyOneInstallerInstance.nsh') -Value $fallback -Encoding ascii
             }
