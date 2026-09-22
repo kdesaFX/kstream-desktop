@@ -107,8 +107,9 @@ jobs:
         run: |
           $templates = Get-ChildItem -Path node_modules -Recurse -Filter allowOnlyOneInstallerInstance.nsh -ErrorAction SilentlyContinue
           if (-not $templates) {
-            $includeDirs = Get-ChildItem -Path node_modules\.pnpm -Recurse -Directory -Filter include -ErrorAction SilentlyContinue |
-              Where-Object { $_.FullName -match 'app-builder-lib.*templates\\nsis\\include$' }
+            $includeDirs = Get-ChildItem -Path node_modules\.pnpm -Directory -Filter 'app-builder-lib@*' -ErrorAction SilentlyContinue |
+              ForEach-Object { Join-Path $_.FullName 'node_modules\app-builder-lib\templates\nsis\include' } |
+              Where-Object { Test-Path -LiteralPath $_ }
             if (-not $includeDirs) { throw "electron-builder NSIS include directory is missing" }
             $fallback = "!macro ALLOW_ONLY_ONE_INSTALLER_INSTANCE`n!macroend`n!macro CHECK_APP_RUNNING`n!macroend`n"
             foreach ($dir in $includeDirs) {
@@ -118,8 +119,9 @@ jobs:
             exit 0
           }
           $source = $templates | Select-Object -First 1
-          $targets = Get-ChildItem -Path node_modules -Recurse -Directory -Filter include -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match 'app-builder-lib.*templates\\nsis\\include$' }
+          $targets = Get-ChildItem -Path node_modules\.pnpm -Directory -Filter 'app-builder-lib@*' -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.FullName 'node_modules\app-builder-lib\templates\nsis\include' } |
+            Where-Object { Test-Path -LiteralPath $_ }
           foreach ($target in $targets) {
             $destination = Join-Path $target.FullName $source.Name
             if (-not (Test-Path -LiteralPath $destination)) {
