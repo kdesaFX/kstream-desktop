@@ -18,13 +18,18 @@ let getWindow = () => null;
 let setQuitting = () => {};
 let fallbackPromise = null;
 let startupCheckPromise = null;
+const launchedAfterUpdateFailure = process.argv.includes(
+  '--kstream-update-failed',
+);
 
 /** @type {{ phase: string, percent: number, version: string | null, error: string | null, setupPath: string | null }} */
 let status = {
-  phase: 'idle',
+  phase: launchedAfterUpdateFailure ? 'error' : 'idle',
   percent: 0,
   version: null,
-  error: null,
+  error: launchedAfterUpdateFailure
+    ? 'The update could not be installed. You are running the previous version.'
+    : null,
   setupPath: null,
 };
 
@@ -33,6 +38,10 @@ function stateFilePath() {
 }
 
 function hasPendingApplyForCurrentVersion() {
+  if (launchedAfterUpdateFailure) {
+    writePersisted({ pendingApply: false });
+    return false;
+  }
   const prev = readPersisted();
   const age = Date.now() - Number(prev.updatedAt || 0);
   const stale = !Number.isFinite(age) || age > 10 * 60 * 1000;
@@ -308,24 +317,26 @@ function installedExePath() {
   return path.join(getInstallDir(), 'kstream.exe');
 }
 
-/** Setup/updater children are often killed with the installer job; this watcher is not. */
-function scheduleRelaunchAfterApply() {
+/** Run the installer outside Electron, then relaunch kstream after it exits. */
+function scheduleRelaunchAfterApply(setupPath) {
   const exe = installedExePath();
   const script = [
+    `$setup = ${JSON.stringify(setupPath)}`,
     `$exe = ${JSON.stringify(exe)}`,
+    '$installer = Start-Process -FilePath $setup -ArgumentList @("/S", "/currentuser", "/NCRC") -PassThru -WindowStyle Hidden',
+    '$installer.WaitForExit()',
+    'if ($installer.ExitCode -ne 0) { Start-Process -FilePath $exe -ArgumentList @("--kstream-update-failed"); exit }',
     'for ($i = 0; $i -lt 40; $i++) {',
+    '  if (Test-Path -LiteralPath $exe) {',
+    '    $running = @(Get-CimInstance Win32_Process -Filter "Name = \'kstream.exe\'" -ErrorAction SilentlyContinue)',
+    '    $installed = $running | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.ToLower() -eq $exe.ToLower() }',
+    '    if (-not $installed) { try { Start-Process -FilePath $exe; exit 0 } catch { } }',
+    '  }',
     '  Start-Sleep -Seconds 2',
-    '  if (-not (Test-Path -LiteralPath $exe)) { continue }',
-    '  $running = @(Get-CimInstance Win32_Process -Filter "Name = \'kstream.exe\'" -ErrorAction SilentlyContinue)',
-    '  $installed = $running | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.ToLower() -eq $exe.ToLower() }',
-    '  if ($installed) { exit 0 }',
-    '  try {',
-    '    Start-Process -FilePath $exe',
-    '    exit 0',
-    '  } catch { }',
     '}',
+    'Start-Process -FilePath $exe -ArgumentList @("--kstream-update-failed")',
   ].join('; ');
-  const child = spawn(
+  return spawn(
     'powershell.exe',
     [
       '-NoProfile',
@@ -342,20 +353,37 @@ function scheduleRelaunchAfterApply() {
       windowsHide: true,
     },
   );
-  child.unref();
 }
 
 function launchSetupAndQuit(exePath) {
   writePersisted({ pendingApply: true });
-  setQuitting();
-  scheduleRelaunchAfterApply();
-  const child = spawn(exePath, ['/S', '/currentuser', '/NCRC'], {
-    detached: true,
-    stdio: 'ignore',
-    windowsVerbatimArguments: true,
+  const supervisor = scheduleRelaunchAfterApply(exePath);
+  return new Promise((resolve) => {
+    let settled = false;
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      writePersisted({ pendingApply: false });
+      setStatus({
+        phase: 'error',
+        error: 'Could not start the update. Try again or install it manually.',
+      });
+      console.warn(
+        '[kstream-desktop] updater supervisor failed',
+        err?.message || err,
+      );
+      resolve(false);
+    };
+    supervisor.once('error', fail);
+    supervisor.once('spawn', () => {
+      if (settled) return;
+      settled = true;
+      supervisor.unref();
+      setQuitting();
+      setTimeout(() => app.quit(), 800);
+      resolve(true);
+    });
   });
-  child.unref();
-  setTimeout(() => app.quit(), 800);
 }
 
 async function startSilentSetupFallback() {
@@ -485,8 +513,10 @@ async function applyDesktopUpdate(quittingSetter, options = {}) {
   }
 
   if (status.setupPath && fs.existsSync(status.setupPath)) {
-    launchSetupAndQuit(status.setupPath);
-    return { ok: true, via: 'installer' };
+    const launched = await launchSetupAndQuit(status.setupPath);
+    return launched
+      ? { ok: true, via: 'installer' }
+      : { ok: false, error: status.error || 'installer-start-failed' };
   }
 
   return { ok: false, error: status.error || 'not-ready' };
