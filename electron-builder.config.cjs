@@ -102,11 +102,9 @@ module.exports = {
   },
   nsis: {
     artifactName: 'kstream-Setup.${ext}',
-    // One-click per-user so in-app Relaunch Now never shows the wizard.
-    oneClick: true,
-    // The runner's pnpm layout can omit electron-builder's optional lock include.
-    // The app updater already serializes installs, so this installer lock is unnecessary.
-    allowOnlyOneInstallerInstance: false,
+    // Use the supported assisted installer path; it avoids the missing NSIS
+    // single-instance include on the GitHub Actions runner.
+    oneClick: false,
     perMachine: false,
     allowElevation: false,
     allowToChangeInstallationDirectory: false,
