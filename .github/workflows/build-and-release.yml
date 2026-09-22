@@ -123,7 +123,7 @@ jobs:
             ForEach-Object { Join-Path $_.FullName 'node_modules\app-builder-lib\templates\nsis\include' } |
             Where-Object { Test-Path -LiteralPath $_ }
           foreach ($target in $targets) {
-            $destination = Join-Path $target.FullName $source.Name
+            $destination = Join-Path $target $source.Name
             if (-not (Test-Path -LiteralPath $destination)) {
               Copy-Item -LiteralPath $source.FullName -Destination $destination
               Write-Host "Restored NSIS template at $destination"
