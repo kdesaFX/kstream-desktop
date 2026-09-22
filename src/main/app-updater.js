@@ -34,6 +34,12 @@ function stateFilePath() {
 
 function hasPendingApplyForCurrentVersion() {
   const prev = readPersisted();
+  const age = Date.now() - Number(prev.updatedAt || 0);
+  const stale = !Number.isFinite(age) || age > 10 * 60 * 1000;
+  if (prev.pendingApply && stale) {
+    writePersisted({ pendingApply: false });
+    return false;
+  }
   return Boolean(prev.pendingApply) && prev.runningVersion === app.getVersion();
 }
 
