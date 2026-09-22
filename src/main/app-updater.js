@@ -107,6 +107,34 @@ function sameAppVersion(a, b) {
   return Boolean(left) && left === right;
 }
 
+function isNewerVersion(candidate, current) {
+  const next = String(candidate || '')
+    .trim()
+    .replace(/^v/i, '')
+    .split('.')
+    .map((part) => Number.parseInt(part, 10));
+  const installed = String(current || '')
+    .trim()
+    .replace(/^v/i, '')
+    .split('.')
+    .map((part) => Number.parseInt(part, 10));
+  if (
+    next.length < 1 ||
+    installed.length < 1 ||
+    next.some((part) => !Number.isFinite(part)) ||
+    installed.some((part) => !Number.isFinite(part))
+  ) {
+    return false;
+  }
+  const length = Math.max(next.length, installed.length);
+  for (let index = 0; index < length; index += 1) {
+    const left = next[index] || 0;
+    const right = installed[index] || 0;
+    if (left !== right) return left > right;
+  }
+  return false;
+}
+
 function discardStaleSetup(filePath) {
   if (!filePath) return;
   try {
@@ -166,7 +194,6 @@ function configureAutoUpdater() {
   autoUpdater.verifyUpdateCodeSignature = false;
 
   autoUpdater.on('checking-for-update', () => {
-    if (status.phase === 'ready') return;
     setStatus({ phase: 'checking', error: null });
   });
 
@@ -180,7 +207,9 @@ function configureAutoUpdater() {
   });
 
   autoUpdater.on('update-not-available', () => {
-    if (status.phase === 'ready' || status.phase === 'downloading') return;
+    if (status.phase === 'ready' && isNewerVersion(status.version, app.getVersion())) {
+      return;
+    }
     setStatus({ phase: 'idle', percent: 0, error: null });
   });
 
@@ -473,7 +502,6 @@ async function checkDesktopUpdateAtStartup(timeoutMs = 20_000) {
 
   configureAutoUpdater();
   hydrateFromDisk();
-  if (status.phase === 'ready') return publicStatus();
 
   startupCheckPromise = new Promise((resolve) => {
     let settled = false;
