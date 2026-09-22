@@ -105,11 +105,20 @@ jobs:
       - name: Verify electron-builder templates
         shell: pwsh
         run: |
-          $template = Get-ChildItem -Path node_modules -Recurse -Filter allowOnlyOneInstallerInstance.nsh -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $template) {
+          $templates = Get-ChildItem -Path node_modules -Recurse -Filter allowOnlyOneInstallerInstance.nsh -ErrorAction SilentlyContinue
+          if (-not $templates) {
             throw "electron-builder NSIS templates are incomplete after dependency installation"
           }
-          Write-Host "Found NSIS template at $($template.FullName)"
+          $source = $templates | Select-Object -First 1
+          $targets = Get-ChildItem -Path node_modules -Recurse -Directory -Filter include -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match 'app-builder-lib.*templates\\nsis\\include$' }
+          foreach ($target in $targets) {
+            $destination = Join-Path $target.FullName $source.Name
+            if (-not (Test-Path -LiteralPath $destination)) {
+              Copy-Item -LiteralPath $source.FullName -Destination $destination
+              Write-Host "Restored NSIS template at $destination"
+            }
+          }
 
       - name: Report signing mode
         shell: pwsh
