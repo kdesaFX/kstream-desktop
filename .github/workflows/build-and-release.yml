@@ -102,6 +102,15 @@ jobs:
       - name: Install desktop dependencies
         run: pnpm install --config.block-exotic-subdeps=false
 
+      - name: Verify electron-builder templates
+        shell: pwsh
+        run: |
+          $template = Get-ChildItem -Path node_modules -Recurse -Filter allowOnlyOneInstallerInstance.nsh -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $template) {
+            throw "electron-builder NSIS templates are incomplete after dependency installation"
+          }
+          Write-Host "Found NSIS template at $($template.FullName)"
+
       - name: Report signing mode
         shell: pwsh
         run: |
