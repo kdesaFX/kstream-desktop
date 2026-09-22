@@ -55,6 +55,7 @@ function updateDownloadProgress(id, ratio) {
 function initVideoOffline(userDataPath) {
   libraryRoot = path.join(userDataPath, 'video-library');
   fs.mkdirSync(libraryRoot, { recursive: true });
+  recoverInterruptedDownloads();
   console.log('[kstream-desktop] Video offline library at', libraryRoot);
 }
 
@@ -96,6 +97,27 @@ function listDownloads() {
     .map((entry) => readMeta(entry.name))
     .filter(Boolean)
     .sort((a, b) => (b.savedAt || b.startedAt || 0) - (a.savedAt || a.startedAt || 0));
+}
+
+function recoverInterruptedDownloads() {
+  if (!libraryRoot || !fs.existsSync(libraryRoot)) return;
+  for (const entry of fs.readdirSync(libraryRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const meta = readMeta(entry.name);
+    if (!meta || meta.status !== 'downloading') continue;
+    writeMeta(entry.name, {
+      ...meta,
+      status: 'error',
+      error: 'Download interrupted. Try again.',
+    });
+    try {
+      fs.rmSync(path.join(downloadDir(entry.name), 'video.mp4.part'), {
+        force: true,
+      });
+    } catch {
+      // Ignore stale temporary files that are already gone.
+    }
+  }
 }
 
 function fetchBuffer(url, headers = {}, timeout = 120_000) {
@@ -154,7 +176,7 @@ function isHlsUrl(url) {
   return /\.m3u8(\?|$)/i.test(url) || url.includes('m3u8');
 }
 
-function runFfmpegDownload(id, url, headers, outputPath) {
+function runFfmpegAttempt(id, url, headers, outputPath) {
   return new Promise((resolve, reject) => {
     let ffmpegBin;
     try {
@@ -164,12 +186,28 @@ function runFfmpegDownload(id, url, headers, outputPath) {
       return;
     }
 
+    const tempPath = `${outputPath}.part`;
+    try {
+      fs.rmSync(tempPath, { force: true });
+      fs.rmSync(outputPath, { force: true });
+    } catch {
+      // The process below will report a useful write failure if cleanup is blocked.
+    }
+
     const args = [
       '-hide_banner',
       '-nostdin',
       '-nostats',
       '-progress',
       'pipe:1',
+      '-reconnect',
+      '1',
+      '-reconnect_streamed',
+      '1',
+      '-reconnect_on_network_error',
+      '1',
+      '-reconnect_delay_max',
+      '10',
     ];
     const headerArg = buildHeaderArg(headers);
     if (headerArg) args.push('-headers', headerArg);
@@ -183,7 +221,7 @@ function runFfmpegDownload(id, url, headers, outputPath) {
       '-movflags',
       '+faststart',
       '-y',
-      outputPath,
+      tempPath,
     );
 
     const proc = spawn(ffmpegBin, args, { windowsHide: true });
@@ -223,13 +261,68 @@ function runFfmpegDownload(id, url, headers, outputPath) {
 
     proc.on('close', (code) => {
       activeDownloads.delete(id);
-      if (code === 0 && fs.existsSync(outputPath)) {
+      if (code === 0 && isValidVideoFile(tempPath)) {
         resolve();
         return;
       }
       reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
     });
   });
+}
+
+function isValidVideoFile(filePath) {
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile() || stat.size < 1024) return false;
+    const header = Buffer.alloc(Math.min(stat.size, 1024 * 1024));
+    const fd = fs.openSync(filePath, 'r');
+    try {
+      fs.readSync(fd, header, 0, header.length, 0);
+    } finally {
+      fs.closeSync(fd);
+    }
+    return header.includes(Buffer.from('ftyp')) || header.includes(Buffer.from('moov'));
+  } catch {
+    return false;
+  }
+}
+
+function waitForRetry(delayMs) {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+async function runFfmpegDownload(id, url, headers, outputPath) {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await runFfmpegAttempt(id, url, headers, outputPath);
+      fs.renameSync(`${outputPath}.part`, outputPath);
+      return;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      try {
+        fs.rmSync(`${outputPath}.part`, { force: true });
+      } catch {
+        // Ignore cleanup failures; the next attempt will try again.
+      }
+      if (attempt < 2) await waitForRetry(1000 * (attempt + 1));
+    }
+  }
+  throw lastError || new Error('HLS download failed');
+}
+
+function formatDownloadError(err) {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/ENOENT|ffmpeg is missing/i.test(message)) {
+    return 'ffmpeg is missing from this desktop build. Update kstream and try again.';
+  }
+  if (/timed out|timeout|connection|network|tcp:|HTTP 5\d\d/i.test(message)) {
+    return 'The source host could not be reached. Try again or choose another source.';
+  }
+  if (/invalid data|moov atom not found|could not write|exited with code/i.test(message)) {
+    return 'The source returned an incomplete or invalid video. Try again or choose another source.';
+  }
+  return message.slice(0, 1000);
 }
 
 function downloadDirectFile(id, url, headers, outputPath) {
@@ -312,6 +405,9 @@ async function startVideoDownload(body) {
       } else {
         await downloadDirectFile(id, url, headers, output);
       }
+      if (!isValidVideoFile(output)) {
+        throw new Error('Downloaded media is incomplete or invalid');
+      }
       const stat = fs.statSync(output);
       const next = {
         ...readMeta(id),
@@ -326,12 +422,12 @@ async function startVideoDownload(body) {
       const next = {
         ...readMeta(id),
         status: 'error',
-        error: err instanceof Error ? err.message : String(err),
+        error: formatDownloadError(err),
       };
       writeMeta(id, next);
       try {
-        if (fs.existsSync(output)) fs.unlinkSync(output);
-        if (fs.existsSync(`${output}.part`)) fs.unlinkSync(`${output}.part`);
+        fs.rmSync(output, { force: true });
+        fs.rmSync(`${output}.part`, { force: true });
       } catch {
         /* ignore */
       }
@@ -344,7 +440,7 @@ async function startVideoDownload(body) {
 function getPlaybackUrl(id, origin) {
   const meta = readMeta(id);
   if (!meta || meta.status !== 'ready') return null;
-  if (!fs.existsSync(videoPath(id))) return null;
+  if (!isValidVideoFile(videoPath(id))) return null;
   return `${origin}/api/offline-video/${id}/video.mp4`;
 }
 
@@ -363,7 +459,7 @@ function serveOfflineVideo(req, res, requestUrl) {
   }
 
   const filePath = videoPath(id);
-  if (!fs.existsSync(filePath)) {
+  if (!isValidVideoFile(filePath)) {
     sendJson(res, { error: 'Not found' }, 404);
     return;
   }
@@ -374,7 +470,26 @@ function serveOfflineVideo(req, res, requestUrl) {
     const match = /^bytes=(\d+)-(\d*)$/.exec(range);
     if (match) {
       const start = Number(match[1]);
-      const end = match[2] ? Number(match[2]) : stat.size - 1;
+      if (!Number.isSafeInteger(start) || start >= stat.size) {
+        res.writeHead(416, {
+          'Content-Range': `bytes */${stat.size}`,
+          ...corsHeaders(),
+        });
+        res.end();
+        return;
+      }
+      const end = Math.min(
+        match[2] ? Number(match[2]) : stat.size - 1,
+        stat.size - 1,
+      );
+      if (!Number.isSafeInteger(end) || end < start) {
+        res.writeHead(416, {
+          'Content-Range': `bytes */${stat.size}`,
+          ...corsHeaders(),
+        });
+        res.end();
+        return;
+      }
       const chunkSize = end - start + 1;
       res.writeHead(206, {
         'Content-Range': `bytes ${start}-${end}/${stat.size}`,
