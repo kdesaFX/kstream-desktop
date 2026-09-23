@@ -11,6 +11,7 @@ const {
   session,
   dialog,
 } = require('electron');
+const fs = require('fs');
 const path = require('path');
 const { handlers, setupInterceptors, CHROME_UA } = require('./ipc-handlers');
 const {
@@ -585,6 +586,7 @@ function createMainWindow() {
 }
 
 function createUpdateWaitWindow() {
+  const logoDataUri = getBundledLogoDataUri();
   const waitWindow = new BrowserWindow({
     width: 360,
     height: 220,
@@ -603,8 +605,8 @@ function createUpdateWaitWindow() {
   waitWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
     <!doctype html><html><head><style>
       *{box-sizing:border-box}body{margin:0;background:#20242b;color:#f5f7fa;font:600 15px Segoe UI,system-ui,sans-serif;display:grid;place-items:center;height:100vh;text-align:center}
-      main{width:100%;padding:28px}.mark{width:48px;height:48px;margin:0 auto 18px;border:4px solid #46505d;border-top-color:#28c7b7;border-radius:50%;animation:spin 1s linear infinite}.title{font-size:16px}.detail{font-size:12px;font-weight:400;color:#aeb6c2;margin-top:9px}@keyframes spin{to{transform:rotate(360deg)}}
-    </style></head><body><main><div class="mark"></div><div class="title">Updating kstream...</div><div class="detail">Please wait while the update finishes.</div></main></body></html>
+      main{width:100%;padding:28px}.logo{width:46px;height:46px;display:block;object-fit:contain;margin:0 auto 14px}.mark{width:38px;height:38px;margin:0 auto 16px;border:4px solid #46505d;border-top-color:#28c7b7;border-radius:50%;animation:spin 1s linear infinite}.title{font-size:16px}.detail{font-size:12px;font-weight:400;color:#aeb6c2;margin-top:9px}@keyframes spin{to{transform:rotate(360deg)}}
+    </style></head><body><main>${logoDataUri ? `<img class="logo" src="${logoDataUri}" alt="kstream">` : ''}<div class="mark"></div><div class="title">Updating kstream...</div><div class="detail">Please wait while the update finishes.</div></main></body></html>
   `)}`);
   setTimeout(() => {
     if (!waitWindow.isDestroyed()) waitWindow.close();
@@ -612,7 +614,28 @@ function createUpdateWaitWindow() {
   }, 10000);
 }
 
+function getBundledLogoDataUri() {
+  const candidates = [
+    path.join(process.resourcesPath, 'logo.png'),
+    path.join(app.getAppPath(), 'logo.png'),
+    path.join(__dirname, '..', '..', 'logo.png'),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) {
+        return `data:image/png;base64,${fs.readFileSync(candidate).toString('base64')}`;
+      }
+    } catch (error) {
+      console.warn('[kstream-desktop] unable to read bundled logo', candidate, error.message);
+    }
+  }
+
+  return '';
+}
+
 function createStartupWindow() {
+  const logoDataUri = getBundledLogoDataUri();
   const startupWindow = new BrowserWindow({
     width: 360,
     height: 220,
@@ -631,8 +654,8 @@ function createStartupWindow() {
   startupWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
     <!doctype html><html><head><style>
       *{box-sizing:border-box}body{margin:0;background:#091313;color:#f7fbfa;font:500 14px Segoe UI,system-ui,sans-serif;display:grid;place-items:center;height:100vh;text-align:center}
-      main{width:100%;padding:25px 28px 23px}.brand{display:flex;align-items:center;justify-content:center;gap:9px;margin-bottom:22px;color:#62e3d4;font-size:19px;font-weight:700;letter-spacing:.2px}.brand-mark{width:25px;height:25px;border:3px solid #62e3d4;border-radius:50%;position:relative}.brand-mark:before,.brand-mark:after{content:"";position:absolute;inset:4px;border:2px solid #62e3d4;border-left-color:transparent;border-right-color:transparent;border-radius:50%}.brand-mark:after{inset:-5px;border-width:2px}.spinner{width:38px;height:38px;margin:0 auto 16px;border:3px solid #263e3d;border-top-color:#62e3d4;border-right-color:#27b9aa;border-radius:50%;animation:spin 850ms linear infinite}.title{font-size:15px;font-weight:650}.detail{font-size:12px;color:#8ea6a3;margin-top:8px}@keyframes spin{to{transform:rotate(360deg)}}
-    </style></head><body><main><div class="brand"><span class="brand-mark"></span><span>kstream</span></div><div class="spinner"></div><div class="title">Getting things ready</div><div class="detail">Checking for updates</div></main></body></html>
+      main{width:100%;padding:25px 28px 23px}.logo{width:48px;height:48px;display:block;object-fit:contain;margin:0 auto 18px}.spinner{width:38px;height:38px;margin:0 auto 16px;border:3px solid #263e3d;border-top-color:#62e3d4;border-right-color:#27b9aa;border-radius:50%;animation:spin 850ms linear infinite}.title{font-size:15px;font-weight:650}.detail{font-size:12px;color:#8ea6a3;margin-top:8px}@keyframes spin{to{transform:rotate(360deg)}}
+    </style></head><body><main>${logoDataUri ? `<img class="logo" src="${logoDataUri}" alt="kstream">` : ''}<div class="spinner"></div><div class="title">Getting things ready</div><div class="detail">Checking for updates</div></main></body></html>
   `)}`);
   return startupWindow;
 }
