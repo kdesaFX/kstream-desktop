@@ -604,8 +604,8 @@ function createUpdateWaitWindow() {
   waitWindow.once('ready-to-show', () => waitWindow.show());
   waitWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
     <!doctype html><html><head><style>
-      *{box-sizing:border-box}body{margin:0;background:#24272e;color:#f5f7fa;font:600 15px Segoe UI,system-ui,sans-serif;display:grid;place-items:center;height:100vh;text-align:center}
-      main{width:100%;padding:58px 30px 54px}.logo{width:76px;height:76px;display:block;object-fit:contain;margin:0 auto 42px;animation:spin 1.4s linear infinite}.title{font-size:16px}.detail{font-size:12px;font-weight:400;color:#aeb6c2;margin-top:10px}@keyframes spin{to{transform:rotate(360deg)}}
+      *{box-sizing:border-box}body{margin:0;background:#24272e;color:#f7fbfa;font:500 14px Segoe UI,system-ui,sans-serif;display:grid;place-items:center;height:100vh;text-align:center}
+      main{width:100%;padding:58px 30px 54px}.logo{width:76px;height:76px;display:block;object-fit:contain;margin:0 auto 42px;animation:spin 1.4s linear infinite}.title{font-size:16px;font-weight:650}.detail{font-size:12px;color:#aeb6c2;margin-top:10px}@keyframes spin{to{transform:rotate(360deg)}}
     </style></head><body><main>${logoDataUri ? `<img class="logo" src="${logoDataUri}" alt="kstream">` : ''}<div class="title">Updating kstream...</div><div class="detail">Please wait while the update finishes.</div></main></body></html>
   `)}`);
   setTimeout(() => {
