@@ -45,7 +45,10 @@ function hasPendingApplyForCurrentVersion() {
   const prev = readPersisted();
   const age = Date.now() - Number(prev.updatedAt || 0);
   const stale = !Number.isFinite(age) || age > 10 * 60 * 1000;
-  if (prev.pendingApply && stale) {
+  // A same-version marker means the installer did not complete. Let normal
+  // startup recover the downloaded setup instead of trapping the app in a
+  // window that quits after ten seconds.
+  if (prev.pendingApply && (stale || prev.runningVersion === app.getVersion())) {
     writePersisted({ pendingApply: false });
     return false;
   }
