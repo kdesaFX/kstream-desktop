@@ -616,6 +616,7 @@ function createUpdateWaitWindow() {
 
 function getBundledLogoDataUri() {
   const candidates = [
+    path.join(path.dirname(process.execPath), 'logo.png'),
     path.join(process.resourcesPath, 'logo.png'),
     path.join(app.getAppPath(), 'logo.png'),
     path.join(__dirname, '..', '..', 'logo.png'),
