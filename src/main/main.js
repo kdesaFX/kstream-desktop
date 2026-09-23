@@ -1082,9 +1082,8 @@ if (!gotLock) {
       ensureInstalledBranding();
     }
 
-    if (hasPendingApplyForCurrentVersion()) {
-      createUpdateWaitWindow();
-    } else if (needsSetup(store)) {
+    hasPendingApplyForCurrentVersion();
+    if (needsSetup(store)) {
       createSetupWindow();
     } else {
       const startupWindow = app.isPackaged ? createStartupWindow() : null;
@@ -1093,10 +1092,10 @@ if (!gotLock) {
         : null;
       if (startupStatus?.phase === 'ready') {
         closeStartupWindow(startupWindow);
-        await applyDesktopUpdate(() => {
+        const updateResult = await applyDesktopUpdate(() => {
           isQuitting = true;
         }, { userInitiated: true });
-        return;
+        if (updateResult?.ok) return;
       }
       closeStartupWindow(startupWindow);
       createMainWindow();
