@@ -588,8 +588,8 @@ function createMainWindow() {
 function createUpdateWaitWindow() {
   const logoDataUri = getBundledLogoDataUri();
   const waitWindow = new BrowserWindow({
-    width: 360,
-    height: 220,
+    width: 300,
+    height: 340,
     frame: false,
     resizable: false,
     movable: false,
@@ -598,15 +598,15 @@ function createUpdateWaitWindow() {
     closable: false,
     alwaysOnTop: true,
     show: false,
-    backgroundColor: '#20242b',
+    backgroundColor: '#24272e',
     webPreferences: { contextIsolation: true, sandbox: true },
   });
   waitWindow.once('ready-to-show', () => waitWindow.show());
   waitWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
     <!doctype html><html><head><style>
-      *{box-sizing:border-box}body{margin:0;background:#20242b;color:#f5f7fa;font:600 15px Segoe UI,system-ui,sans-serif;display:grid;place-items:center;height:100vh;text-align:center}
-      main{width:100%;padding:28px}.logo{width:46px;height:46px;display:block;object-fit:contain;margin:0 auto 14px}.mark{width:38px;height:38px;margin:0 auto 16px;border:4px solid #46505d;border-top-color:#28c7b7;border-radius:50%;animation:spin 1s linear infinite}.title{font-size:16px}.detail{font-size:12px;font-weight:400;color:#aeb6c2;margin-top:9px}@keyframes spin{to{transform:rotate(360deg)}}
-    </style></head><body><main>${logoDataUri ? `<img class="logo" src="${logoDataUri}" alt="kstream">` : ''}<div class="mark"></div><div class="title">Updating kstream...</div><div class="detail">Please wait while the update finishes.</div></main></body></html>
+      *{box-sizing:border-box}body{margin:0;background:#24272e;color:#f5f7fa;font:600 15px Segoe UI,system-ui,sans-serif;display:grid;place-items:center;height:100vh;text-align:center}
+      main{width:100%;padding:58px 30px 54px}.logo{width:76px;height:76px;display:block;object-fit:contain;margin:0 auto 42px;animation:spin 1.4s linear infinite}.title{font-size:16px}.detail{font-size:12px;font-weight:400;color:#aeb6c2;margin-top:10px}@keyframes spin{to{transform:rotate(360deg)}}
+    </style></head><body><main>${logoDataUri ? `<img class="logo" src="${logoDataUri}" alt="kstream">` : ''}<div class="title">Updating kstream...</div><div class="detail">Please wait while the update finishes.</div></main></body></html>
   `)}`);
   setTimeout(() => {
     if (!waitWindow.isDestroyed()) waitWindow.close();
@@ -637,8 +637,8 @@ function getBundledLogoDataUri() {
 function createStartupWindow() {
   const logoDataUri = getBundledLogoDataUri();
   const startupWindow = new BrowserWindow({
-    width: 360,
-    height: 220,
+    width: 300,
+    height: 340,
     frame: false,
     resizable: false,
     movable: false,
@@ -647,15 +647,15 @@ function createStartupWindow() {
     closable: false,
     alwaysOnTop: true,
     show: false,
-    backgroundColor: '#20242b',
+    backgroundColor: '#24272e',
     webPreferences: { contextIsolation: true, sandbox: true },
   });
   startupWindow.once('ready-to-show', () => startupWindow.show());
   startupWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
     <!doctype html><html><head><style>
-      *{box-sizing:border-box}body{margin:0;background:#091313;color:#f7fbfa;font:500 14px Segoe UI,system-ui,sans-serif;display:grid;place-items:center;height:100vh;text-align:center}
-      main{width:100%;padding:25px 28px 23px}.logo{width:48px;height:48px;display:block;object-fit:contain;margin:0 auto 18px}.spinner{width:38px;height:38px;margin:0 auto 16px;border:3px solid #263e3d;border-top-color:#62e3d4;border-right-color:#27b9aa;border-radius:50%;animation:spin 850ms linear infinite}.title{font-size:15px;font-weight:650}.detail{font-size:12px;color:#8ea6a3;margin-top:8px}@keyframes spin{to{transform:rotate(360deg)}}
-    </style></head><body><main>${logoDataUri ? `<img class="logo" src="${logoDataUri}" alt="kstream">` : ''}<div class="spinner"></div><div class="title">Getting things ready</div><div class="detail">Checking for updates</div></main></body></html>
+      *{box-sizing:border-box}body{margin:0;background:#24272e;color:#f7fbfa;font:500 14px Segoe UI,system-ui,sans-serif;display:grid;place-items:center;height:100vh;text-align:center}
+      main{width:100%;padding:58px 30px 54px}.logo{width:76px;height:76px;display:block;object-fit:contain;margin:0 auto 42px;animation:spin 1.4s linear infinite}.title{font-size:16px;font-weight:650}.detail{font-size:12px;color:#aeb6c2;margin-top:10px}@keyframes spin{to{transform:rotate(360deg)}}
+    </style></head><body><main>${logoDataUri ? `<img class="logo" src="${logoDataUri}" alt="kstream">` : ''}<div class="title">Starting kstream...</div><div class="detail">Checking for updates</div></main></body></html>
   `)}`);
   return startupWindow;
 }
