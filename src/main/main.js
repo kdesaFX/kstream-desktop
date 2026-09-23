@@ -1015,12 +1015,13 @@ async function fetchReleaseDateFromPage(tmdbId, mediaType) {
   }
 }
 
-function setupAutoUpdater() {
+function setupAutoUpdater(options = {}) {
   setupBackgroundCheck(
     () => mainWindow,
     () => {
       isQuitting = true;
     },
+    options,
   );
 }
 
@@ -1088,7 +1089,7 @@ if (!gotLock) {
     } else {
       const startupWindow = app.isPackaged ? createStartupWindow() : null;
       const startupStatus = app.isPackaged
-        ? await checkDesktopUpdateAtStartup(5_000)
+        ? await checkDesktopUpdateAtStartup(90_000)
         : null;
       if (startupStatus?.phase === 'ready') {
         closeStartupWindow(startupWindow);
@@ -1099,7 +1100,7 @@ if (!gotLock) {
       }
       closeStartupWindow(startupWindow);
       createMainWindow();
-      setupAutoUpdater();
+      setupAutoUpdater({ skipInitialCheck: true });
       startDiscordPresence(app.getPath('userData'));
     }
 

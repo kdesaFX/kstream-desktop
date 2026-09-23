@@ -150,6 +150,8 @@ function discardStaleSetup(filePath) {
 function hydrateFromDisk() {
   const prev = readPersisted();
   const running = app.getVersion();
+  const age = Date.now() - Number(prev.updatedAt || 0);
+  const stale = !Number.isFinite(age) || age > 10 * 60 * 1000;
   const applied =
     Boolean(prev.pendingApply) &&
     typeof prev.runningVersion === 'string' &&
@@ -171,6 +173,19 @@ function hydrateFromDisk() {
 
   if (prev.pendingApply) {
     writePersisted({ pendingApply: false });
+  }
+
+  if (stale) {
+    discardStaleSetup(prev.setupPath);
+    status = {
+      phase: 'idle',
+      percent: 0,
+      version: null,
+      error: null,
+      setupPath: null,
+    };
+    writePersisted({ pendingApply: false });
+    return;
   }
 
   if (
@@ -458,7 +473,7 @@ async function startSilentSetupFallback() {
   return fallbackPromise;
 }
 
-function setupBackgroundCheck(windowGetter, quittingSetter) {
+function setupBackgroundCheck(windowGetter, quittingSetter, options = {}) {
   getWindow = windowGetter || getWindow;
   setQuitting = quittingSetter || setQuitting;
 
@@ -476,7 +491,9 @@ function setupBackgroundCheck(windowGetter, quittingSetter) {
     });
   };
 
-  setTimeout(check, 12_000);
+  if (!options.skipInitialCheck) {
+    setTimeout(check, 12_000);
+  }
   setInterval(check, 30 * 60 * 1000);
 }
 
@@ -505,7 +522,7 @@ async function checkDesktopUpdate(options = {}) {
 }
 
 /** Check before the main window opens, but never block startup indefinitely. */
-async function checkDesktopUpdateAtStartup(timeoutMs = 20_000) {
+async function checkDesktopUpdateAtStartup(timeoutMs = 90_000) {
   if (!app.isPackaged) return { ...publicStatus(), phase: 'idle', error: 'dev' };
   if (startupCheckPromise) return startupCheckPromise;
 
