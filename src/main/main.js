@@ -1092,7 +1092,6 @@ if (!gotLock) {
         ? await checkDesktopUpdateAtStartup(90_000)
         : null;
       if (startupStatus?.phase === 'ready') {
-        closeStartupWindow(startupWindow);
         const updateResult = await applyDesktopUpdate(() => {
           isQuitting = true;
         }, { userInitiated: true });

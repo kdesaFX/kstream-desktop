@@ -66,15 +66,32 @@ function readPersisted() {
 function writePersisted(extra) {
   try {
     const prev = readPersisted();
+    const hasTargetVersion = Object.prototype.hasOwnProperty.call(
+      extra || {},
+      'targetVersion',
+    );
     const next = {
       runningVersion: app.getVersion(),
       phase: status.phase,
       version: status.version,
       setupPath: status.setupPath || null,
       pendingApply: Boolean(extra?.pendingApply ?? prev.pendingApply),
+      targetVersion: hasTargetVersion
+        ? extra.targetVersion
+        : prev.targetVersion || status.version || null,
       updatedAt: Date.now(),
     };
-    fs.writeFileSync(stateFilePath(), JSON.stringify(next));
+    const statePath = stateFilePath();
+    const tempPath = `${statePath}.${process.pid}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(next));
+    try {
+      fs.renameSync(tempPath, statePath);
+    } catch {
+      // Windows cannot replace an open destination with rename(). Keep the
+      // state durable even when another updater read has the file open.
+      removeFile(statePath);
+      fs.renameSync(tempPath, statePath);
+    }
   } catch {
     // ignore
   }
@@ -208,7 +225,9 @@ function configureAutoUpdater() {
 
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = false;
-  autoUpdater.autoRunAppAfterInstall = true;
+  // The detached supervisor owns installation and relaunch. Electron's own
+  // relaunch would race it and can leave the app closed after a failed apply.
+  autoUpdater.autoRunAppAfterInstall = false;
   autoUpdater.verifyUpdateCodeSignature = false;
 
   autoUpdater.on('checking-for-update', () => {
@@ -280,6 +299,18 @@ function setupDestPath() {
   return path.join(app.getPath('temp'), 'kstream-Setup.exe');
 }
 
+function setupPartPath() {
+  return `${setupDestPath()}.part`;
+}
+
+function removeFile(filePath) {
+  try {
+    if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch {
+    // ignore cleanup failures
+  }
+}
+
 function writeWebStreamToFile(webStream, dest, onBytes) {
   return new Promise((resolve, reject) => {
     const writer = fs.createWriteStream(dest);
@@ -317,16 +348,18 @@ function writeWebStreamToFile(webStream, dest, onBytes) {
 
 async function downloadLatestSetup() {
   const dest = setupDestPath();
+  const part = setupPartPath();
   let lastError = new Error('Could not download updater');
   for (const url of SETUP_URLS) {
     try {
+      removeFile(part);
       const res = await net.fetch(`${url}?t=${Date.now()}`, { redirect: 'follow' });
       if (!res.ok || !res.body) {
         lastError = new Error(`Could not download updater (${res.status})`);
         continue;
       }
       const total = Number(res.headers.get('content-length') || 0);
-      await writeWebStreamToFile(res.body, dest, (received) => {
+      await writeWebStreamToFile(res.body, part, (received) => {
         const percent =
           total > 0
             ? Math.max(0, Math.min(99, Math.round((received / total) * 100)))
@@ -337,24 +370,27 @@ async function downloadLatestSetup() {
           error: null,
         });
       });
-      const size = fs.statSync(dest).size;
+      const size = fs.statSync(part).size;
       if (size < 1_000_000) {
         lastError = new Error('Updater download looks incomplete');
-        try {
-          fs.unlinkSync(dest);
-        } catch {
-          // ignore
-        }
+        removeFile(part);
         continue;
       }
+      const header = Buffer.alloc(2);
+      const reader = fs.openSync(part, 'r');
+      fs.readSync(reader, header, 0, 2, 0);
+      fs.closeSync(reader);
+      if (header.toString('ascii') !== 'MZ') {
+        lastError = new Error('Updater download is not a Windows installer');
+        removeFile(part);
+        continue;
+      }
+      removeFile(dest);
+      fs.renameSync(part, dest);
       return dest;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      try {
-        if (fs.existsSync(dest)) fs.unlinkSync(dest);
-      } catch {
-        // ignore
-      }
+      removeFile(part);
     }
   }
   throw lastError;
@@ -364,30 +400,29 @@ function installedExePath() {
   return path.join(getInstallDir(), 'kstream.exe');
 }
 
-/** Run the installer outside Electron, then relaunch kstream after it exits. */
-function scheduleRelaunchAfterApply(setupPath) {
-  const exe = installedExePath();
+/** Run the installer outside Electron and verify a replacement process starts. */
+function scheduleRelaunchAfterApply(setupPath, targetVersion) {
+  const installed = installedExePath();
+  const exe = fs.existsSync(installed) ? installed : process.execPath;
+  const logPath = path.join(app.getPath('userData'), 'update-supervisor.log');
   const script = [
     `$setup = ${JSON.stringify(setupPath)}`,
     `$exe = ${JSON.stringify(exe)}`,
-    'for ($i = 0; $i -lt 40; $i++) {',
-    '  $running = @(Get-CimInstance Win32_Process -Filter "Name = \'kstream.exe\'" -ErrorAction SilentlyContinue)',
-    '  $installed = $running | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.ToLower() -eq $exe.ToLower() }',
-    '  if (-not $installed) { break }',
-    '  Start-Sleep -Milliseconds 500',
-    '}',
-    'try { $installer = Start-Process -FilePath $setup -ArgumentList @("/S", "/currentuser", "/NCRC") -PassThru -WindowStyle Hidden -ErrorAction Stop } catch { Start-Process -FilePath $exe -ArgumentList @("--kstream-update-failed"); exit }',
+    `$target = ${JSON.stringify(String(targetVersion || ''))}`,
+    `$log = ${JSON.stringify(logPath)}`,
+    `$parentPid = ${process.pid}`,
+    'function Log($message) { Add-Content -LiteralPath $log -Value ((Get-Date).ToString("o") + " " + $message) }',
+    'function Relaunch($failed) { if (Test-Path -LiteralPath $exe) { $args = @(); if ($failed) { $args = @("--kstream-update-failed") }; try { Start-Process -FilePath $exe -ArgumentList $args -WorkingDirectory (Split-Path -Parent $exe) -ErrorAction Stop; return $true } catch { Log ("relaunch failed: " + $_.Exception.Message) } }; return $false }',
+    'Log "supervisor started"',
+    'for ($i = 0; $i -lt 60; $i++) { if (-not (Get-Process -Id $parentPid -ErrorAction SilentlyContinue)) { break }; Start-Sleep -Milliseconds 250 }',
+    'try { $installer = Start-Process -FilePath $setup -ArgumentList @("/S", "/currentuser", "/NCRC") -PassThru -WindowStyle Hidden -ErrorAction Stop } catch { Log ("installer start failed: " + $_.Exception.Message); Relaunch $true; exit 1 }',
     '$installer.WaitForExit()',
-    'if ($installer.ExitCode -ne 0) { Start-Process -FilePath $exe -ArgumentList @("--kstream-update-failed"); exit }',
-    'for ($i = 0; $i -lt 40; $i++) {',
-    '  if (Test-Path -LiteralPath $exe) {',
-    '    $running = @(Get-CimInstance Win32_Process -Filter "Name = \'kstream.exe\'" -ErrorAction SilentlyContinue)',
-    '    $installed = $running | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.ToLower() -eq $exe.ToLower() }',
-    '    if (-not $installed) { try { Start-Process -FilePath $exe; exit 0 } catch { } }',
-    '  }',
-    '  Start-Sleep -Seconds 2',
-    '}',
-    'Start-Process -FilePath $exe -ArgumentList @("--kstream-update-failed")',
+    'if ($installer.ExitCode -ne 0) { Log ("installer exited with " + $installer.ExitCode); Relaunch $true; exit 1 }',
+    'if (-not (Test-Path -LiteralPath $exe)) { Log "installed executable is missing"; Relaunch $true; exit 1 }',
+    '$actual = (Get-Item -LiteralPath $exe).VersionInfo.ProductVersion',
+    'if ($target -and $actual -and $actual -ne $target) { Log ("version mismatch: expected " + $target + ", got " + $actual); Relaunch $true; exit 1 }',
+    'for ($i = 0; $i -lt 30; $i++) { try { if (Relaunch $false) { Log "relaunch started"; exit 0 } } catch { Log ("relaunch retry failed: " + $_.Exception.Message) }; Start-Sleep -Seconds 1 }',
+    'Log "relaunch could not be started"; Relaunch $true; exit 1',
   ].join('; ');
   return spawn(
     'powershell.exe',
@@ -409,10 +444,11 @@ function scheduleRelaunchAfterApply(setupPath) {
 }
 
 function launchSetupAndQuit(exePath) {
-  writePersisted({ pendingApply: true });
-  const supervisor = scheduleRelaunchAfterApply(exePath);
+  writePersisted({ pendingApply: true, targetVersion: status.version });
+  const supervisor = scheduleRelaunchAfterApply(exePath, status.version);
   return new Promise((resolve) => {
     let settled = false;
+    let spawned = false;
     const fail = (err) => {
       if (settled) return;
       settled = true;
@@ -428,8 +464,14 @@ function launchSetupAndQuit(exePath) {
       resolve(false);
     };
     supervisor.once('error', fail);
+    supervisor.once('exit', (code) => {
+      if (!spawned || (code !== null && code !== 0)) {
+        fail(new Error(`updater supervisor exited with ${code}`));
+      }
+    });
     supervisor.once('spawn', () => {
       if (settled) return;
+      spawned = true;
       settled = true;
       supervisor.unref();
       setQuitting();
@@ -524,6 +566,9 @@ async function checkDesktopUpdate(options = {}) {
 /** Check before the main window opens, but never block startup indefinitely. */
 async function checkDesktopUpdateAtStartup(timeoutMs = 90_000) {
   if (!app.isPackaged) return { ...publicStatus(), phase: 'idle', error: 'dev' };
+  // A failed supervisor relaunches the previous build with this marker. Do
+  // not immediately retry the same update and trap the user in a loop.
+  if (launchedAfterUpdateFailure) return publicStatus();
   if (startupCheckPromise) return startupCheckPromise;
 
   configureAutoUpdater();
@@ -589,7 +634,9 @@ function attachInstallerDownloadHandler(sess, quittingSetter) {
   sess.on('will-download', (_event, item) => {
     if (!isKstreamSetupDownload(item.getFilename(), item.getURL())) return;
     const dest = setupDestPath();
-    item.setSavePath(dest);
+    const part = setupPartPath();
+    removeFile(part);
+    item.setSavePath(part);
     setStatus({ phase: 'downloading', percent: 1, error: null });
     item.on('updated', (_e, state) => {
       if (state !== 'progressing') return;
@@ -603,13 +650,32 @@ function attachInstallerDownloadHandler(sess, quittingSetter) {
     });
     item.once('done', (_e, state) => {
       if (state === 'completed') {
-        setStatus({
-          phase: 'ready',
-          percent: 100,
-          error: null,
-          setupPath: dest,
-        });
+        try {
+          const size = fs.statSync(part).size;
+          const header = Buffer.alloc(2);
+          const reader = fs.openSync(part, 'r');
+          fs.readSync(reader, header, 0, 2, 0);
+          fs.closeSync(reader);
+          if (size < 1_000_000 || header.toString('ascii') !== 'MZ') {
+            throw new Error('invalid installer download');
+          }
+          removeFile(dest);
+          fs.renameSync(part, dest);
+          setStatus({
+            phase: 'ready',
+            percent: 100,
+            error: null,
+            setupPath: dest,
+          });
+        } catch (err) {
+          removeFile(part);
+          setStatus({
+            phase: 'error',
+            error: 'The downloaded update is invalid. Try again later.',
+          });
+        }
       } else {
+        removeFile(part);
         setStatus({
           phase: 'error',
           error: 'Could not download the update. Try again later.',
