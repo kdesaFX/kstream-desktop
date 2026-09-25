@@ -13,6 +13,26 @@ const { withPublicDns } = require('./public-dns');
 const DEFAULT_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:93.0) Gecko/20100101 Firefox/93.0';
 
+const hlsCookieJar = new Map();
+
+function storeHlsCookies(host, setCookie) {
+  const values = Array.isArray(setCookie) ? setCookie : [setCookie];
+  const jar = hlsCookieJar.get(host) || new Map();
+  for (const value of values) {
+    const pair = String(value || '').split(';', 1)[0];
+    const separator = pair.indexOf('=');
+    if (separator <= 0) continue;
+    jar.set(pair.slice(0, separator).trim(), pair.slice(separator + 1).trim());
+  }
+  if (jar.size > 0) hlsCookieJar.set(host, jar);
+}
+
+function hlsCookieHeader(host) {
+  const jar = hlsCookieJar.get(host);
+  if (!jar || jar.size === 0) return null;
+  return [...jar.entries()].map(([name, value]) => `${name}=${value}`).join('; ');
+}
+
 function corsHeaders(extra = {}) {
   return {
     'Access-Control-Allow-Origin': '*',
@@ -271,18 +291,45 @@ function rewritePlaylist(
   return rewritten;
 }
 
-function fetchBuffer(target, headers) {
+function fetchBuffer(target, headers, redirectCount = 0) {
   return new Promise((resolve, reject) => {
     const lib = target.protocol === 'https:' ? https : http;
+    const requestHeaders = { ...headers };
+    if (!requestHeaders.Cookie && !requestHeaders.cookie) {
+      const cookie = hlsCookieHeader(target.hostname.toLowerCase());
+      if (cookie) requestHeaders.Cookie = cookie;
+    }
     const req = lib.request(
       target,
-      withPublicDns({ method: 'GET', headers, timeout: 30_000 }),
+      withPublicDns({ method: 'GET', headers: requestHeaders, timeout: 30_000 }),
       (upstream) => {
+        const status = upstream.statusCode || 502;
+        storeHlsCookies(target.hostname.toLowerCase(), upstream.headers['set-cookie']);
+        const location = upstream.headers.location;
+        if (
+          location &&
+          [301, 302, 303, 307, 308].includes(status) &&
+          redirectCount < 5
+        ) {
+          upstream.resume();
+          try {
+            resolve(
+              fetchBuffer(
+                assertSafeDestination(new URL(location, target.href).href),
+                requestHeaders,
+                redirectCount + 1,
+              ),
+            );
+          } catch (error) {
+            reject(error);
+          }
+          return;
+        }
         const chunks = [];
         upstream.on('data', (chunk) => chunks.push(chunk));
         upstream.on('end', () => {
           resolve({
-            status: upstream.statusCode || 502,
+            status,
             statusMessage: upstream.statusMessage || '',
             headers: upstream.headers,
             body: Buffer.concat(chunks),
@@ -361,7 +408,7 @@ function handleM3u8Proxy(req, res, requestUrl) {
   })();
 }
 
-function handleTsProxy(req, res, requestUrl) {
+function handleTsProxy(req, res, requestUrl, redirectCount = 0) {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, corsHeaders());
     res.end();
@@ -381,6 +428,10 @@ function handleTsProxy(req, res, requestUrl) {
       'User-Agent': DEFAULT_UA,
       ...clientHeaders,
     };
+    if (!upstreamHeaders.Cookie && !upstreamHeaders.cookie) {
+      const cookie = hlsCookieHeader(target.hostname.toLowerCase());
+      if (cookie) upstreamHeaders.Cookie = cookie;
+    }
     if (range) upstreamHeaders.Range = range;
 
     const lib = target.protocol === 'https:' ? https : http;
@@ -388,6 +439,27 @@ function handleTsProxy(req, res, requestUrl) {
       target,
       withPublicDns({ method: 'GET', headers: upstreamHeaders, timeout: 60_000 }),
       (upstream) => {
+        const status = upstream.statusCode || 502;
+        storeHlsCookies(target.hostname.toLowerCase(), upstream.headers['set-cookie']);
+        const location = upstream.headers.location;
+        if (
+          location &&
+          [301, 302, 303, 307, 308].includes(status) &&
+          redirectCount < 5
+        ) {
+          upstream.resume();
+          try {
+            const nextUrl = new URL(requestUrl.href);
+            nextUrl.searchParams.set(
+              'url',
+              assertSafeDestination(new URL(location, target.href).href).href,
+            );
+            handleTsProxy(req, res, nextUrl, redirectCount + 1);
+          } catch (error) {
+            sendJson(res, { error: error.message || 'TS proxy redirect failed' }, 400);
+          }
+          return;
+        }
         const upstreamType = String(upstream.headers['content-type'] || '').toLowerCase();
         const remapHtmlTs =
           upstreamType.includes('text/html') || /page-\d+\.html/i.test(target.pathname);
@@ -423,7 +495,7 @@ function handleTsProxy(req, res, requestUrl) {
             : contentLength;
         }
 
-        res.writeHead(upstream.statusCode || 502, headers);
+        res.writeHead(status, headers);
         upstream.pipe(res);
       },
     );

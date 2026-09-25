@@ -156,6 +156,34 @@ function buildUpstreamHeaders(incoming, embedded = {}) {
   return out;
 }
 
+const proxyCookieJar = new Map();
+
+function findHeader(headers, name) {
+  const wanted = name.toLowerCase();
+  const entry = Object.entries(headers).find(
+    ([key]) => key.toLowerCase() === wanted,
+  );
+  return entry?.[1];
+}
+
+function storeProxyCookies(host, setCookie) {
+  const values = Array.isArray(setCookie) ? setCookie : [setCookie];
+  const jar = proxyCookieJar.get(host) || new Map();
+  for (const value of values) {
+    const pair = String(value || '').split(';', 1)[0];
+    const separator = pair.indexOf('=');
+    if (separator <= 0) continue;
+    jar.set(pair.slice(0, separator).trim(), pair.slice(separator + 1).trim());
+  }
+  if (jar.size > 0) proxyCookieJar.set(host, jar);
+}
+
+function cookieHeaderForHost(host) {
+  const jar = proxyCookieJar.get(host);
+  if (!jar || jar.size === 0) return null;
+  return [...jar.entries()].map(([name, value]) => `${name}=${value}`).join('; ');
+}
+
 function collectRequestHeaders(req) {
   const headers = {};
   for (const [key, value] of Object.entries(req.headers)) {
@@ -174,26 +202,61 @@ function readRequestBody(req) {
   });
 }
 
-function proxyFetch(target, method, headers, body) {
+function proxyFetch(target, method, headers, body, redirectCount = 0) {
   return new Promise((resolve, reject) => {
     const lib = target.protocol === 'https:' ? https : http;
+    const requestHeaders = { ...headers };
+    if (!findHeader(requestHeaders, 'cookie')) {
+      const cookie = cookieHeaderForHost(target.hostname.toLowerCase());
+      if (cookie) requestHeaders.Cookie = cookie;
+    }
     const req = lib.request(
       target,
       withPublicDns({
         method,
-        headers,
+        headers: requestHeaders,
         timeout: 30_000,
       }),
       (upstream) => {
+        const status = upstream.statusCode || 502;
+        storeProxyCookies(target.hostname.toLowerCase(), upstream.headers['set-cookie']);
+        const location = upstream.headers.location;
+        if (
+          location &&
+          [301, 302, 303, 307, 308].includes(status) &&
+          redirectCount < 5
+        ) {
+          upstream.resume();
+          try {
+            const nextTarget = assertSafeDestination(
+              new URL(location, target.href).href,
+            );
+            const isGetRedirect =
+              status === 303 ||
+              ((status === 301 || status === 302) && method !== 'GET');
+            resolve(
+              proxyFetch(
+                nextTarget,
+                isGetRedirect ? 'GET' : method,
+                requestHeaders,
+                isGetRedirect ? null : body,
+                redirectCount + 1,
+              ),
+            );
+          } catch (error) {
+            reject(error);
+          }
+          return;
+        }
         const chunks = [];
         upstream.on('data', (chunk) => chunks.push(chunk));
         upstream.on('end', () => {
           resolve({
-            status: upstream.statusCode || 502,
+            status,
             statusMessage: upstream.statusMessage || '',
             headers: upstream.headers,
             body: Buffer.concat(chunks),
-            finalUrl: upstream.headers['x-final-destination'] || target.href,
+            finalUrl: target.href,
           });
         });
         upstream.on('error', reject);
