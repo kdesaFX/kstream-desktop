@@ -185,11 +185,38 @@ function hydrateFromDisk() {
       setupPath: null,
     };
     writePersisted({ pendingApply: false });
-    return;
+    return false;
   }
 
-  if (prev.pendingApply) {
+  if (prev.pendingApply && prev.runningVersion === running) {
+    if (stale) {
+      discardStaleSetup(prev.setupPath);
+      status = {
+        phase: 'idle',
+        percent: 0,
+        version: null,
+        error: null,
+        setupPath: null,
+      };
+      writePersisted({ pendingApply: false });
+      return false;
+    }
+    const canRecover =
+      prev.setupPath &&
+      fs.existsSync(prev.setupPath) &&
+      prev.version &&
+      isNewerVersion(prev.version, running);
+    status = {
+      phase: canRecover ? 'ready' : 'error',
+      percent: canRecover ? 100 : 0,
+      version: canRecover ? prev.version : null,
+      error: canRecover
+        ? 'The previous update did not finish. You can retry it from the app.'
+        : 'The previous update did not finish. Please check for updates again.',
+      setupPath: canRecover ? prev.setupPath : null,
+    };
     writePersisted({ pendingApply: false });
+    return true;
   }
 
   if (stale) {
@@ -202,7 +229,7 @@ function hydrateFromDisk() {
       setupPath: null,
     };
     writePersisted({ pendingApply: false });
-    return;
+    return false;
   }
 
   if (
@@ -217,6 +244,7 @@ function hydrateFromDisk() {
     status.version = prev.version;
     status.error = null;
   }
+  return false;
 }
 
 function configureAutoUpdater() {
@@ -412,15 +440,16 @@ function scheduleRelaunchAfterApply(setupPath, targetVersion) {
     `$log = ${JSON.stringify(logPath)}`,
     `$parentPid = ${process.pid}`,
     'function Log($message) { Add-Content -LiteralPath $log -Value ((Get-Date).ToString("o") + " " + $message) }',
-    'function Relaunch($failed) { if (Test-Path -LiteralPath $exe) { $args = @(); if ($failed) { $args = @("--kstream-update-failed") }; try { Start-Process -FilePath $exe -ArgumentList $args -WorkingDirectory (Split-Path -Parent $exe) -ErrorAction Stop; return $true } catch { Log ("relaunch failed: " + $_.Exception.Message) } }; return $false }',
+    'function Relaunch($failed) { if (Test-Path -LiteralPath $exe) { $args = @(); if ($failed) { $args = @("--kstream-update-failed") }; try { $child = Start-Process -FilePath $exe -ArgumentList $args -WorkingDirectory (Split-Path -Parent $exe) -PassThru -ErrorAction Stop; Start-Sleep -Seconds 2; if (Get-Process -Id $child.Id -ErrorAction SilentlyContinue) { return $true }; Log "relaunch exited immediately" } catch { Log ("relaunch failed: " + $_.Exception.Message) } }; return $false }',
     'Log "supervisor started"',
     'for ($i = 0; $i -lt 60; $i++) { if (-not (Get-Process -Id $parentPid -ErrorAction SilentlyContinue)) { break }; Start-Sleep -Milliseconds 250 }',
     'try { $installer = Start-Process -FilePath $setup -ArgumentList @("/S", "/currentuser", "/NCRC") -PassThru -WindowStyle Hidden -ErrorAction Stop } catch { Log ("installer start failed: " + $_.Exception.Message); Relaunch $true; exit 1 }',
     '$installer.WaitForExit()',
     'if ($installer.ExitCode -ne 0) { Log ("installer exited with " + $installer.ExitCode); Relaunch $true; exit 1 }',
     'if (-not (Test-Path -LiteralPath $exe)) { Log "installed executable is missing"; Relaunch $true; exit 1 }',
-    '$actual = (Get-Item -LiteralPath $exe).VersionInfo.ProductVersion',
-    'if ($target -and $actual -and $actual -ne $target) { Log ("version mismatch: expected " + $target + ", got " + $actual); Relaunch $true; exit 1 }',
+    '$actual = ((Get-Item -LiteralPath $exe).VersionInfo.ProductVersion -replace "\\.0$", "")',
+    '$expected = ($target -replace "^v", "" -replace "\\.0$", "")',
+    'if ($expected -and $actual -and $actual -ne $expected) { Log ("version mismatch: expected " + $expected + ", got " + $actual); Relaunch $true; exit 1 }',
     'for ($i = 0; $i -lt 30; $i++) { try { if (Relaunch $false) { Log "relaunch started"; exit 0 } } catch { Log ("relaunch retry failed: " + $_.Exception.Message) }; Start-Sleep -Seconds 1 }',
     'Log "relaunch could not be started"; Relaunch $true; exit 1',
   ].join('; ');
@@ -572,7 +601,14 @@ async function checkDesktopUpdateAtStartup(timeoutMs = 90_000) {
   if (startupCheckPromise) return startupCheckPromise;
 
   configureAutoUpdater();
-  hydrateFromDisk();
+  const recoveredInterruptedApply = hydrateFromDisk();
+  if (recoveredInterruptedApply) {
+    return {
+      ...publicStatus(),
+      phase: 'recovery',
+      recovery: true,
+    };
+  }
 
   startupCheckPromise = new Promise((resolve) => {
     let settled = false;

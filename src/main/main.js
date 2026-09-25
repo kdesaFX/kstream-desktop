@@ -173,6 +173,7 @@ const store = new SimpleStore({
 });
 
 let mainWindow = null;
+let startupWindow = null;
 let tray = null;
 let isQuitting = false;
 let showingSetup = false;
@@ -637,7 +638,7 @@ function getBundledLogoDataUri() {
 
 function createStartupWindow() {
   const logoDataUri = getBundledLogoDataUri();
-  const startupWindow = new BrowserWindow({
+  startupWindow = new BrowserWindow({
     width: 300,
     height: 340,
     frame: false,
@@ -661,14 +662,15 @@ function createStartupWindow() {
   return startupWindow;
 }
 
-function closeStartupWindow(startupWindow) {
-  if (!startupWindow || startupWindow.isDestroyed()) return;
+function closeStartupWindow(windowToClose) {
+  if (!windowToClose || windowToClose.isDestroyed()) return;
   try {
-    startupWindow.hide();
-    startupWindow.destroy();
+    windowToClose.hide();
+    windowToClose.destroy();
   } catch {
     // The window may already be closing during app startup.
   }
+  if (windowToClose === startupWindow) startupWindow = null;
 }
 
 function openAppAfterSetup() {
@@ -1039,6 +1041,11 @@ if (!gotLock) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.show();
       mainWindow.focus();
+    } else if (startupWindow && !startupWindow.isDestroyed()) {
+      startupWindow.show();
+      startupWindow.focus();
+    } else if (app.isReady() && !isQuitting && !showingSetup) {
+      createMainWindow();
     }
   });
 
@@ -1087,11 +1094,11 @@ if (!gotLock) {
     if (needsSetup(store)) {
       createSetupWindow();
     } else {
-      const startupWindow = app.isPackaged ? createStartupWindow() : null;
+      startupWindow = app.isPackaged ? createStartupWindow() : null;
       const startupStatus = app.isPackaged
         ? await checkDesktopUpdateAtStartup(90_000)
         : null;
-      if (startupStatus?.phase === 'ready') {
+      if (startupStatus?.phase === 'ready' && !startupStatus.recovery) {
         const updateResult = await applyDesktopUpdate(() => {
           isQuitting = true;
         }, { userInitiated: true });
