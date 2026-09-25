@@ -586,6 +586,21 @@ function createMainWindow() {
   return mainWindow;
 }
 
+function revealMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  try {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.moveTop();
+    mainWindow.focus();
+    app.focus({ steal: true });
+    return true;
+  } catch (err) {
+    console.warn('[kstream-desktop] could not reveal main window', err?.message || err);
+    return false;
+  }
+}
+
 function createUpdateWaitWindow() {
   const logoDataUri = getBundledLogoDataUri();
   const waitWindow = new BrowserWindow({
@@ -1038,9 +1053,7 @@ if (!gotLock) {
     const authUrl = extractProtocolUrl(commandLine);
     if (authUrl) deliverAuthCallback(mainWindow, authUrl);
     if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
+      revealMainWindow();
     } else if (startupWindow && !startupWindow.isDestroyed()) {
       startupWindow.show();
       startupWindow.focus();
@@ -1115,8 +1128,7 @@ if (!gotLock) {
         if (needsSetup(store)) createSetupWindow();
         else createMainWindow();
       } else if (mainWindow) {
-        mainWindow.show();
-        mainWindow.focus();
+        revealMainWindow();
       }
     });
   });
