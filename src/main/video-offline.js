@@ -176,6 +176,22 @@ function isHlsUrl(url) {
   return /\.m3u8(\?|$)/i.test(url) || url.includes('m3u8');
 }
 
+function directHlsFallbackUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (
+      !['127.0.0.1', 'localhost'].includes(parsed.hostname.toLowerCase()) ||
+      !/\/api\/m3u8-proxy\/?$/i.test(parsed.pathname)
+    ) {
+      return null;
+    }
+    const target = parsed.searchParams.get('url');
+    return target && isHlsUrl(target) ? target : null;
+  } catch {
+    return null;
+  }
+}
+
 function runFfmpegAttempt(id, url, headers, outputPath) {
   return new Promise((resolve, reject) => {
     let ffmpegBin;
@@ -292,20 +308,26 @@ function waitForRetry(delayMs) {
 }
 
 async function runFfmpegDownload(id, url, headers, outputPath) {
+  const urls = [url];
+  const directUrl = directHlsFallbackUrl(url);
+  if (directUrl && directUrl !== url) urls.push(directUrl);
+
   let lastError;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      await runFfmpegAttempt(id, url, headers, outputPath);
-      fs.renameSync(`${outputPath}.part`, outputPath);
-      return;
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
+  for (const candidate of urls) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        fs.rmSync(`${outputPath}.part`, { force: true });
-      } catch {
-        // Ignore cleanup failures; the next attempt will try again.
+        await runFfmpegAttempt(id, candidate, headers, outputPath);
+        fs.renameSync(`${outputPath}.part`, outputPath);
+        return;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        try {
+          fs.rmSync(`${outputPath}.part`, { force: true });
+        } catch {
+          // Ignore cleanup failures; the next attempt will try again.
+        }
+        if (attempt < 2) await waitForRetry(1000 * (attempt + 1));
       }
-      if (attempt < 2) await waitForRetry(1000 * (attempt + 1));
     }
   }
   throw lastError || new Error('HLS download failed');
