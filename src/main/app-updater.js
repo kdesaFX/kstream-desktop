@@ -48,10 +48,7 @@ function hasPendingApplyForCurrentVersion() {
   const prev = readPersisted();
   const age = Date.now() - Number(prev.updatedAt || 0);
   const stale = !Number.isFinite(age) || age > 10 * 60 * 1000;
-  // A same-version marker means the installer did not complete. Let normal
-  // startup recover the downloaded setup instead of trapping the app in a
-  // window that quits after ten seconds.
-  if (prev.pendingApply && (stale || prev.runningVersion === app.getVersion())) {
+  if (prev.pendingApply && stale) {
     writePersisted({ pendingApply: false });
     return false;
   }
@@ -492,9 +489,18 @@ function launchSetupAndQuit(exePath) {
   return new Promise((resolve) => {
     let settled = false;
     let spawned = false;
+    const handoffTimeout = setTimeout(() => {
+      try {
+        supervisor.kill();
+      } catch {
+        // Ignore cleanup failures; the app must remain usable.
+      }
+      fail(new Error('Updater supervisor did not start in time'));
+    }, 5_000);
     const fail = (err) => {
       if (settled) return;
       settled = true;
+      clearTimeout(handoffTimeout);
       writePersisted({ pendingApply: false });
       setStatus({
         phase: 'error',
@@ -516,6 +522,7 @@ function launchSetupAndQuit(exePath) {
       if (settled) return;
       spawned = true;
       settled = true;
+      clearTimeout(handoffTimeout);
       supervisor.unref();
       setQuitting();
       setTimeout(() => app.quit(), 800);
