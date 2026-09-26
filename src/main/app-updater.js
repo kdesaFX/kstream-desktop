@@ -11,6 +11,9 @@ const SETUP_URLS = [
   'https://github.com/kdesaFX/kstream-desktop/releases/latest/download/kstream-Setup.exe',
   'https://kdesa.stream/download/kstream-Setup.exe',
 ];
+const LATEST_METADATA_URL =
+  'https://github.com/kdesaFX/kstream-desktop/releases/latest/download/latest.yml';
+const STARTUP_CHECK_TIMEOUT_MS = 15_000;
 
 let configured = false;
 let manualCheck = false;
@@ -312,14 +315,7 @@ function configureAutoUpdater() {
   autoUpdater.on('error', (err) => {
     console.warn('[kstream-desktop] updater error', err?.message || err);
     if (status.phase === 'ready') return;
-    if (status.phase === 'downloading') {
-      void startSilentSetupFallback();
-      return;
-    }
-    setStatus({
-      phase: 'idle',
-      error: null,
-    });
+    void startSilentSetupFallback();
   });
 }
 
@@ -329,6 +325,24 @@ function setupDestPath() {
 
 function setupPartPath() {
   return `${setupDestPath()}.part`;
+}
+
+async function fetchLatestVersion() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await net.fetch(`${LATEST_METADATA_URL}?t=${Date.now()}`, {
+      redirect: 'follow',
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`Could not read latest release (${response.status})`);
+    const metadata = await response.text();
+    const match = metadata.match(/^version:\s*([^\s#]+)\s*$/m);
+    if (!match?.[1]) throw new Error('Latest release metadata has no version');
+    return match[1];
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function removeFile(filePath) {
@@ -520,11 +534,23 @@ async function startSilentSetupFallback() {
       error: null,
     });
     try {
+      const latestVersion = await fetchLatestVersion();
+      if (!isNewerVersion(latestVersion, app.getVersion())) {
+        setStatus({
+          phase: 'idle',
+          percent: 0,
+          version: null,
+          error: null,
+          setupPath: null,
+        });
+        return;
+      }
       const dest = await downloadLatestSetup();
       setStatus({
         phase: 'ready',
         percent: 100,
         error: null,
+        version: latestVersion,
         setupPath: dest,
       });
     } catch (err) {
@@ -593,7 +619,7 @@ async function checkDesktopUpdate(options = {}) {
 }
 
 /** Check before the main window opens, but never block startup indefinitely. */
-async function checkDesktopUpdateAtStartup(timeoutMs = 90_000) {
+async function checkDesktopUpdateAtStartup(timeoutMs = STARTUP_CHECK_TIMEOUT_MS) {
   if (!app.isPackaged) return { ...publicStatus(), phase: 'idle', error: 'dev' };
   // A failed supervisor relaunches the previous build with this marker. Do
   // not immediately retry the same update and trap the user in a loop.
@@ -619,20 +645,24 @@ async function checkDesktopUpdateAtStartup(timeoutMs = 90_000) {
 
   startupCheckPromise = new Promise((resolve) => {
     let settled = false;
+    const finishWithFallback = () => {
+      void startSilentSetupFallback();
+      finish();
+    };
     const finish = () => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       autoUpdater.removeListener('update-not-available', finish);
       autoUpdater.removeListener('update-downloaded', finish);
-      autoUpdater.removeListener('error', finish);
+      autoUpdater.removeListener('error', finishWithFallback);
       resolve(publicStatus());
     };
-    const timer = setTimeout(finish, timeoutMs);
+    const timer = setTimeout(finishWithFallback, timeoutMs);
     autoUpdater.once('update-not-available', finish);
     autoUpdater.once('update-downloaded', finish);
-    autoUpdater.once('error', finish);
-    autoUpdater.checkForUpdates().catch(finish);
+    autoUpdater.once('error', finishWithFallback);
+    autoUpdater.checkForUpdates().catch(finishWithFallback);
   }).finally(() => {
     startupCheckPromise = null;
   });
