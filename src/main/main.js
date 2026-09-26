@@ -1109,7 +1109,7 @@ if (!gotLock) {
     } else {
       startupWindow = app.isPackaged ? createStartupWindow() : null;
       const startupStatus = app.isPackaged
-        ? await checkDesktopUpdateAtStartup(90_000)
+        ? await checkDesktopUpdateAtStartup(15_000)
         : null;
       if (startupStatus?.phase === 'ready' && !startupStatus.recovery) {
         const updateResult = await applyDesktopUpdate(() => {

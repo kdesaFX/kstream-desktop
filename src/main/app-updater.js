@@ -609,6 +609,13 @@ async function checkDesktopUpdateAtStartup(timeoutMs = 90_000) {
       recovery: true,
     };
   }
+  if (
+    status.phase === 'ready' &&
+    status.setupPath &&
+    isNewerVersion(status.version, app.getVersion())
+  ) {
+    return publicStatus();
+  }
 
   startupCheckPromise = new Promise((resolve) => {
     let settled = false;
