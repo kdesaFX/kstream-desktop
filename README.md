@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./logo.png" alt="kstream logo" width="112">
+  <img src="https://kdesa.stream/logo.png?v=9" alt="kstream logo" width="112">
 
   <h1>kstream Desktop</h1>
 
