@@ -60,7 +60,7 @@ jobs:
           PUPPETEER_SKIP_DOWNLOAD: '1'
         run: |
           Push-Location providers-src
-          pnpm install --ignore-workspace
+          pnpm install --force --config.node-linker=hoisted --ignore-workspace --ignore-scripts
           pnpm exec vite build
           pnpm pack --pack-destination ..
           Pop-Location
