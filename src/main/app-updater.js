@@ -13,14 +13,11 @@ const SETUP_URLS = [
 ];
 const LATEST_METADATA_URL =
   'https://github.com/kdesaFX/kstream-desktop/releases/latest/download/latest.yml';
-const STARTUP_CHECK_TIMEOUT_MS = 15_000;
-
 let configured = false;
 let manualCheck = false;
 let getWindow = () => null;
 let setQuitting = () => {};
 let fallbackPromise = null;
-let startupCheckPromise = null;
 const launchedAfterUpdateFailure = process.argv.includes(
   '--kstream-update-failed',
 );
@@ -38,21 +35,6 @@ let status = {
 
 function stateFilePath() {
   return path.join(app.getPath('userData'), 'update-state.json');
-}
-
-function hasPendingApplyForCurrentVersion() {
-  if (launchedAfterUpdateFailure) {
-    writePersisted({ pendingApply: false });
-    return false;
-  }
-  const prev = readPersisted();
-  const age = Date.now() - Number(prev.updatedAt || 0);
-  const stale = !Number.isFinite(age) || age > 10 * 60 * 1000;
-  if (prev.pendingApply && stale) {
-    writePersisted({ pendingApply: false });
-    return false;
-  }
-  return Boolean(prev.pendingApply) && prev.runningVersion === app.getVersion();
 }
 
 function readPersisted() {
@@ -577,7 +559,7 @@ async function startSilentSetupFallback() {
   return fallbackPromise;
 }
 
-function setupBackgroundCheck(windowGetter, quittingSetter, options = {}) {
+function initializeUpdater(windowGetter, quittingSetter) {
   getWindow = windowGetter || getWindow;
   setQuitting = quittingSetter || setQuitting;
 
@@ -588,17 +570,6 @@ function setupBackgroundCheck(windowGetter, quittingSetter, options = {}) {
 
   configureAutoUpdater();
   hydrateFromDisk();
-
-  const check = () => {
-    autoUpdater.checkForUpdates().catch((err) => {
-      console.warn('[kstream-desktop] update check failed', err?.message || err);
-    });
-  };
-
-  if (!options.skipInitialCheck) {
-    setTimeout(check, 12_000);
-  }
-  setInterval(check, 30 * 60 * 1000);
 }
 
 function getDesktopUpdateStatus() {
@@ -623,58 +594,6 @@ async function checkDesktopUpdate(options = {}) {
     autoUpdater.autoDownload = previousAutoDownload;
   }
   return publicStatus();
-}
-
-/** Check before the main window opens, but never block startup indefinitely. */
-async function checkDesktopUpdateAtStartup(timeoutMs = STARTUP_CHECK_TIMEOUT_MS) {
-  if (!app.isPackaged) return { ...publicStatus(), phase: 'idle', error: 'dev' };
-  // A failed supervisor relaunches the previous build with this marker. Do
-  // not immediately retry the same update and trap the user in a loop.
-  if (launchedAfterUpdateFailure) return publicStatus();
-  if (startupCheckPromise) return startupCheckPromise;
-
-  configureAutoUpdater();
-  const recoveredInterruptedApply = hydrateFromDisk();
-  if (recoveredInterruptedApply) {
-    return {
-      ...publicStatus(),
-      phase: 'recovery',
-      recovery: true,
-    };
-  }
-  if (
-    status.phase === 'ready' &&
-    status.setupPath &&
-    isNewerVersion(status.version, app.getVersion())
-  ) {
-    return publicStatus();
-  }
-
-  startupCheckPromise = new Promise((resolve) => {
-    let settled = false;
-    const finishWithFallback = () => {
-      void startSilentSetupFallback();
-      finish();
-    };
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      autoUpdater.removeListener('update-not-available', finish);
-      autoUpdater.removeListener('update-downloaded', finish);
-      autoUpdater.removeListener('error', finishWithFallback);
-      resolve(publicStatus());
-    };
-    const timer = setTimeout(finishWithFallback, timeoutMs);
-    autoUpdater.once('update-not-available', finish);
-    autoUpdater.once('update-downloaded', finish);
-    autoUpdater.once('error', finishWithFallback);
-    autoUpdater.checkForUpdates().catch(finishWithFallback);
-  }).finally(() => {
-    startupCheckPromise = null;
-  });
-
-  return startupCheckPromise;
 }
 
 async function applyDesktopUpdate(quittingSetter, options = {}) {
@@ -766,10 +685,8 @@ function attachInstallerDownloadHandler(sess, quittingSetter) {
 }
 
 module.exports = {
-  setupBackgroundCheck,
-  hasPendingApplyForCurrentVersion,
+  initializeUpdater,
   checkDesktopUpdate,
-  checkDesktopUpdateAtStartup,
   applyDesktopUpdate,
   getDesktopUpdateStatus,
   installDesktopUpdate: applyDesktopUpdate,

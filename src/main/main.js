@@ -11,13 +11,10 @@ const {
   session,
   dialog,
 } = require('electron');
-const fs = require('fs');
 const path = require('path');
 const { handlers, setupInterceptors, CHROME_UA } = require('./ipc-handlers');
 const {
-  setupBackgroundCheck,
-  hasPendingApplyForCurrentVersion,
-  checkDesktopUpdateAtStartup,
+  initializeUpdater,
   applyDesktopUpdate,
   checkDesktopUpdate,
   getDesktopUpdateStatus,
@@ -173,7 +170,6 @@ const store = new SimpleStore({
 });
 
 let mainWindow = null;
-let startupWindow = null;
 let tray = null;
 let isQuitting = false;
 let showingSetup = false;
@@ -329,14 +325,6 @@ function createTray(win) {
       click: () => {
         win.show();
         win.focus();
-      },
-    },
-    {
-      label: 'Check for updates',
-      click: () => {
-        checkDesktopUpdate().catch((err) => {
-          console.warn('[kstream-desktop] update check failed', err);
-        });
       },
     },
     { type: 'separator' },
@@ -599,93 +587,6 @@ function revealMainWindow() {
     console.warn('[kstream-desktop] could not reveal main window', err?.message || err);
     return false;
   }
-}
-
-function createUpdateWaitWindow() {
-  const logoDataUri = getBundledLogoDataUri();
-  const waitWindow = new BrowserWindow({
-    width: 300,
-    height: 340,
-    frame: false,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    closable: false,
-    alwaysOnTop: true,
-    show: false,
-    backgroundColor: '#24272e',
-    webPreferences: { contextIsolation: true, sandbox: true },
-  });
-  waitWindow.once('ready-to-show', () => waitWindow.show());
-  waitWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
-    <!doctype html><html><head><style>
-      *{box-sizing:border-box}body{margin:0;background:#24272e;color:#f7fbfa;font:500 14px Segoe UI,system-ui,sans-serif;display:grid;place-items:center;height:100vh;text-align:center}
-      main{width:100%;padding:58px 30px 54px}.logo{width:76px;height:76px;display:block;object-fit:contain;margin:0 auto 42px;animation:spin 1.4s linear infinite}.title{font-size:16px;font-weight:650}.detail{font-size:12px;color:#aeb6c2;margin-top:10px}@keyframes spin{to{transform:rotate(360deg)}}
-    </style></head><body><main>${logoDataUri ? `<img class="logo" src="${logoDataUri}" alt="kstream">` : ''}<div class="title">Updating kstream...</div><div class="detail">Please wait while the update finishes.</div></main></body></html>
-  `)}`);
-  setTimeout(() => {
-    if (!waitWindow.isDestroyed()) waitWindow.close();
-    app.quit();
-  }, 10000);
-}
-
-function getBundledLogoDataUri() {
-  const candidates = [
-    path.join(path.dirname(process.execPath), 'logo.png'),
-    path.join(process.resourcesPath, 'logo.png'),
-    path.join(app.getAppPath(), 'logo.png'),
-    path.join(__dirname, '..', '..', 'logo.png'),
-  ];
-
-  for (const candidate of candidates) {
-    try {
-      if (fs.existsSync(candidate)) {
-        return `data:image/png;base64,${fs.readFileSync(candidate).toString('base64')}`;
-      }
-    } catch (error) {
-      console.warn('[kstream-desktop] unable to read bundled logo', candidate, error.message);
-    }
-  }
-
-  return '';
-}
-
-function createStartupWindow() {
-  const logoDataUri = getBundledLogoDataUri();
-  startupWindow = new BrowserWindow({
-    width: 300,
-    height: 340,
-    frame: false,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    closable: false,
-    alwaysOnTop: true,
-    show: false,
-    backgroundColor: '#24272e',
-    webPreferences: { contextIsolation: true, sandbox: true },
-  });
-  startupWindow.once('ready-to-show', () => startupWindow.show());
-  startupWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
-    <!doctype html><html><head><style>
-      *{box-sizing:border-box}body{margin:0;background:#24272e;color:#f7fbfa;font:500 14px Segoe UI,system-ui,sans-serif;display:grid;place-items:center;height:100vh;text-align:center}
-      main{width:100%;padding:58px 30px 54px}.logo{width:76px;height:76px;display:block;object-fit:contain;margin:0 auto 42px;animation:spin 1.4s linear infinite}.title{font-size:16px;font-weight:650}.detail{font-size:12px;color:#aeb6c2;margin-top:10px}@keyframes spin{to{transform:rotate(360deg)}}
-    </style></head><body><main>${logoDataUri ? `<img class="logo" src="${logoDataUri}" alt="kstream">` : ''}<div class="title">Starting kstream...</div><div class="detail">Checking for updates</div></main></body></html>
-  `)}`);
-  return startupWindow;
-}
-
-function closeStartupWindow(windowToClose) {
-  if (!windowToClose || windowToClose.isDestroyed()) return;
-  try {
-    windowToClose.hide();
-    windowToClose.destroy();
-  } catch {
-    // The window may already be closing during app startup.
-  }
-  if (windowToClose === startupWindow) startupWindow = null;
 }
 
 function openAppAfterSetup() {
@@ -1032,13 +933,12 @@ async function fetchReleaseDateFromPage(tmdbId, mediaType) {
   }
 }
 
-function setupAutoUpdater(options = {}) {
-  setupBackgroundCheck(
+function setupAutoUpdater() {
+  initializeUpdater(
     () => mainWindow,
     () => {
       isQuitting = true;
     },
-    options,
   );
 }
 
@@ -1054,9 +954,6 @@ if (!gotLock) {
     if (authUrl) deliverAuthCallback(mainWindow, authUrl);
     if (mainWindow) {
       revealMainWindow();
-    } else if (startupWindow && !startupWindow.isDestroyed()) {
-      startupWindow.show();
-      startupWindow.focus();
     } else if (app.isReady() && !isQuitting && !showingSetup) {
       createMainWindow();
     }
@@ -1103,23 +1000,11 @@ if (!gotLock) {
       ensureInstalledBranding();
     }
 
-    hasPendingApplyForCurrentVersion();
     if (needsSetup(store)) {
       createSetupWindow();
     } else {
-      startupWindow = app.isPackaged ? createStartupWindow() : null;
-      const startupStatus = app.isPackaged
-        ? await checkDesktopUpdateAtStartup()
-        : null;
-      if (startupStatus?.phase === 'ready' && !startupStatus.recovery) {
-        const updateResult = await applyDesktopUpdate(() => {
-          isQuitting = true;
-        }, { userInitiated: true });
-        if (updateResult?.ok) return;
-      }
-      closeStartupWindow(startupWindow);
       createMainWindow();
-      setupAutoUpdater({ skipInitialCheck: true });
+      setupAutoUpdater();
       startDiscordPresence(app.getPath('userData'));
     }
 
