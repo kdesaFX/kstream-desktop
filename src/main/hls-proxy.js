@@ -94,6 +94,19 @@ function parseClientHeaders(raw) {
   return out;
 }
 
+function encodeProxyTarget(value) {
+  return `b64.${Buffer.from(value, 'utf8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '')}`;
+}
+
+function decodeProxyTarget(value) {
+  const b64 = value.slice(4).replace(/-/g, '+').replace(/_/g, '/');
+  return Buffer.from(b64, 'base64').toString('utf8');
+}
+
 function isVaplayerPlaylist(url, headers) {
   const referer = headers.Referer || headers.referer || '';
   return (
@@ -276,7 +289,7 @@ function buildSegmentOrNestedProxy(
 ) {
   const path = isPlaylist ? '/api/m3u8-proxy' : '/api/ts-proxy';
   const u = new URL(path, origin);
-  u.searchParams.set('url', absolute);
+   u.searchParams.set('url', encodeProxyTarget(absolute));
   if (clientHeadersJson) u.searchParams.set('headers', clientHeadersJson);
   if (browserFriendly && isPlaylist) u.searchParams.set('browser', '1');
   return u.toString();
@@ -424,7 +437,10 @@ function handleM3u8Proxy(req, res, requestUrl) {
 
   void (async () => {
     try {
-      const targetRaw = requestUrl.searchParams.get('url');
+       const encodedTarget = requestUrl.searchParams.get('url');
+       const targetRaw = encodedTarget?.startsWith('b64.')
+         ? decodeProxyTarget(encodedTarget)
+         : encodedTarget;
       if (!targetRaw) {
         sendJson(res, { error: 'Missing url query parameter' }, 400);
         return;
@@ -488,7 +504,10 @@ function handleTsProxy(req, res, requestUrl, redirectCount = 0) {
   }
 
   try {
-    const targetRaw = requestUrl.searchParams.get('url');
+     const encodedTarget = requestUrl.searchParams.get('url');
+     const targetRaw = encodedTarget?.startsWith('b64.')
+       ? decodeProxyTarget(encodedTarget)
+       : encodedTarget;
     if (!targetRaw) {
       sendJson(res, { error: 'Missing url query parameter' }, 400);
       return;
