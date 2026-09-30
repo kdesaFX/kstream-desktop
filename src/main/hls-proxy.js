@@ -94,6 +94,68 @@ function parseClientHeaders(raw) {
   return out;
 }
 
+function isVaplayerPlaylist(url, headers) {
+  const referer = headers.Referer || headers.referer || '';
+  return (
+    url.pathname.includes('/pl/') &&
+    /(?:cornclick\.com|cloudorchestranova\.com)/i.test(referer)
+  );
+}
+
+function parseVaplayerToken(body) {
+  const trimmed = String(body || '').trim();
+  if (!trimmed) return '';
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return trimmed;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed === 'string') return parsed;
+    if (parsed && typeof parsed === 'object') {
+      for (const key of ['token', 'data', 'string', 'result']) {
+        if (typeof parsed[key] === 'string') return parsed[key];
+      }
+    }
+  } catch {
+    // Fall through and let the upstream request use its original URL.
+  }
+  return '';
+}
+
+async function authorizeVaplayerPlaylist(target, headers) {
+  if (!isVaplayerPlaylist(target, headers)) return target;
+  try {
+    const tokenUrl = new URL('/generate.php', target.origin);
+    const tokenResponse = await fetchBuffer(tokenUrl, headers);
+    if (tokenResponse.status < 200 || tokenResponse.status >= 300) return target;
+    const token = parseVaplayerToken(tokenResponse.body.toString('utf8'));
+    if (!token) return target;
+    const authorized = new URL(target.href);
+    authorized.searchParams.set('token', token);
+    return authorized;
+  } catch {
+    return target;
+  }
+}
+
+function carryVaplayerToken(absolute, playlistUrl) {
+  try {
+    const playlist = new URL(playlistUrl);
+    const token = playlist.searchParams.get('token');
+    const child = new URL(absolute);
+    if (
+      !token ||
+      !playlist.pathname.includes('/pl/') ||
+      child.origin !== playlist.origin ||
+      !child.pathname.includes('/pl/')
+    ) {
+      return absolute;
+    }
+    child.searchParams.set('token', token);
+    return child.href;
+  } catch {
+    return absolute;
+  }
+}
+
 function resolvePlaylistUri(uri, baseUrl) {
   try {
     return new URL(uri, baseUrl).href;
@@ -244,7 +306,10 @@ function rewritePlaylist(
         const namesAPlaylist = tagNamesAPlaylist(line);
         out.push(
           line.replace(/URI="([^"]+)"/g, (_m, uri) => {
-            const absolute = resolvePlaylistUri(uri, playlistUrl);
+            const absolute = carryVaplayerToken(
+              resolvePlaylistUri(uri, playlistUrl),
+              playlistUrl,
+            );
             if (!absolute) return `URI="${uri}"`;
             const proxied = buildSegmentOrNestedProxy(
               absolute,
@@ -265,7 +330,10 @@ function rewritePlaylist(
       continue;
     }
 
-    const absolute = resolvePlaylistUri(line.trim(), playlistUrl);
+    const absolute = carryVaplayerToken(
+      resolvePlaylistUri(line.trim(), playlistUrl),
+      playlistUrl,
+    );
     if (!absolute) {
       out.push(line);
       afterStreamInf = false;
@@ -372,7 +440,11 @@ function handleM3u8Proxy(req, res, requestUrl) {
         ...clientHeaders,
       };
 
-      const upstream = await fetchBuffer(target, upstreamHeaders);
+       const authorizedTarget = await authorizeVaplayerPlaylist(
+         target,
+         upstreamHeaders,
+       );
+       const upstream = await fetchBuffer(authorizedTarget, upstreamHeaders);
       const contentType = Array.isArray(upstream.headers['content-type'])
         ? upstream.headers['content-type'][0]
         : upstream.headers['content-type'] || '';
