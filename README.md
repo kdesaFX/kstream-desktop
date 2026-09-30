@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://kdesa.stream/logo.png?v=9" alt="kstream logo" width="112">
+  <img src="./logo.png" alt="kstream logo" width="112">
 
   <h1>kstream Desktop</h1>
 
@@ -155,3 +155,4 @@ Bug reports, focused improvements, and documentation fixes are welcome. For chan
 <div align="center">
   <sub>Built for Windows · Part of the kstream project</sub>
 </div>
+
