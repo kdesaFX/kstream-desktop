@@ -100,7 +100,7 @@ jobs:
           Write-Host "Bundled web UI files:" (Get-ChildItem $dest -Recurse -File | Measure-Object).Count
 
       - name: Install desktop dependencies
-        run: pnpm install --config.block-exotic-subdeps=false
+        run: pnpm install --config.node-linker=hoisted --config.block-exotic-subdeps=false
 
       - name: Verify electron-builder templates
         shell: pwsh
