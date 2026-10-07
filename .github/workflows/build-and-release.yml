@@ -112,10 +112,11 @@ jobs:
             $includeDir = Join-Path $package.FullName 'node_modules\app-builder-lib\templates\nsis\include'
             New-Item -ItemType Directory -Force -Path $includeDir | Out-Null
             $destination = Join-Path $includeDir 'allowOnlyOneInstallerInstance.nsh'
-            if (-not (Test-Path -LiteralPath $destination)) {
-              Set-Content -LiteralPath $destination -Value $fallback -Encoding ascii
-              Write-Host "Restored fallback NSIS template at $destination"
+            Set-Content -LiteralPath $destination -Value $fallback -Encoding ascii
+            if (-not (Test-Path -LiteralPath $destination -PathType Leaf)) {
+              throw "NSIS fallback template was not created at $destination"
             }
+            Write-Host "Verified fallback NSIS template at $destination"
           }
 
       - name: Report signing mode
