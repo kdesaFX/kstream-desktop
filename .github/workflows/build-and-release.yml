@@ -105,19 +105,22 @@ jobs:
       - name: Verify electron-builder templates
         shell: pwsh
         run: |
-          $packageRoots = Get-ChildItem -Path node_modules\.pnpm -Directory -Filter 'app-builder-lib@*' -ErrorAction SilentlyContinue
-          if (-not $packageRoots) { throw "electron-builder app-builder-lib package is missing" }
-          $fallback = "!macro ALLOW_ONLY_ONE_INSTALLER_INSTANCE`n!macroend`n!macro CHECK_APP_RUNNING`n!macroend`n"
-          foreach ($package in $packageRoots) {
-            $includeDir = Join-Path $package.FullName 'node_modules\app-builder-lib\templates\nsis\include'
-            New-Item -ItemType Directory -Force -Path $includeDir | Out-Null
-            $destination = Join-Path $includeDir 'allowOnlyOneInstallerInstance.nsh'
-            Set-Content -LiteralPath $destination -Value $fallback -Encoding ascii
-            if (-not (Test-Path -LiteralPath $destination -PathType Leaf)) {
-              throw "NSIS fallback template was not created at $destination"
-            }
-            Write-Host "Verified fallback NSIS template at $destination"
-          }
+          $script = @'
+          const fs = require('fs');
+          const path = require('path');
+          const electronBuilder = path.dirname(require.resolve('electron-builder'));
+          const appBuilderEntry = require.resolve('app-builder-lib', { paths: [electronBuilder] });
+          let appBuilderRoot = path.dirname(appBuilderEntry);
+          while (!fs.existsSync(path.join(appBuilderRoot, 'package.json'))) appBuilderRoot = path.dirname(appBuilderRoot);
+          const includeDir = path.join(appBuilderRoot, 'templates', 'nsis', 'include');
+          const destination = path.join(includeDir, 'allowOnlyOneInstallerInstance.nsh');
+          fs.mkdirSync(includeDir, { recursive: true });
+          fs.writeFileSync(destination, '!macro ALLOW_ONLY_ONE_INSTALLER_INSTANCE\n!macroend\n!macro CHECK_APP_RUNNING\n!macroend\n', 'ascii');
+          if (!fs.statSync(destination).isFile()) throw new Error(`NSIS fallback is not a file: ${destination}`);
+          console.log(`Verified NSIS fallback at ${destination}`);
+          '@
+          node -e $script
+          if ($LASTEXITCODE -ne 0) { throw "Failed to place NSIS fallback template" }
 
       - name: Report signing mode
         shell: pwsh
