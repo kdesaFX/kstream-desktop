@@ -105,28 +105,16 @@ jobs:
       - name: Verify electron-builder templates
         shell: pwsh
         run: |
-          $templates = Get-ChildItem -Path node_modules -Recurse -Filter allowOnlyOneInstallerInstance.nsh -ErrorAction SilentlyContinue
-          if (-not $templates) {
-            $includeDirs = Get-ChildItem -Path node_modules\.pnpm -Directory -Filter 'app-builder-lib@*' -ErrorAction SilentlyContinue |
-              ForEach-Object { Join-Path $_.FullName 'node_modules\app-builder-lib\templates\nsis\include' } |
-              Where-Object { Test-Path -LiteralPath $_ }
-            if (-not $includeDirs) { throw "electron-builder NSIS include directory is missing" }
-            $fallback = "!macro ALLOW_ONLY_ONE_INSTALLER_INSTANCE`n!macroend`n!macro CHECK_APP_RUNNING`n!macroend`n"
-            foreach ($dir in $includeDirs) {
-              Set-Content -LiteralPath (Join-Path $dir 'allowOnlyOneInstallerInstance.nsh') -Value $fallback -Encoding ascii
-            }
-            Write-Host "Restored fallback NSIS template in $($includeDirs.Count) package path(s)"
-            exit 0
-          }
-          $source = $templates | Select-Object -First 1
-          $targets = Get-ChildItem -Path node_modules\.pnpm -Directory -Filter 'app-builder-lib@*' -ErrorAction SilentlyContinue |
-            ForEach-Object { Join-Path $_.FullName 'node_modules\app-builder-lib\templates\nsis\include' } |
-            Where-Object { Test-Path -LiteralPath $_ }
-          foreach ($target in $targets) {
-            $destination = Join-Path $target $source.Name
+          $packageRoots = Get-ChildItem -Path node_modules\.pnpm -Directory -Filter 'app-builder-lib@*' -ErrorAction SilentlyContinue
+          if (-not $packageRoots) { throw "electron-builder app-builder-lib package is missing" }
+          $fallback = "!macro ALLOW_ONLY_ONE_INSTALLER_INSTANCE`n!macroend`n!macro CHECK_APP_RUNNING`n!macroend`n"
+          foreach ($package in $packageRoots) {
+            $includeDir = Join-Path $package.FullName 'node_modules\app-builder-lib\templates\nsis\include'
+            New-Item -ItemType Directory -Force -Path $includeDir | Out-Null
+            $destination = Join-Path $includeDir 'allowOnlyOneInstallerInstance.nsh'
             if (-not (Test-Path -LiteralPath $destination)) {
-              Copy-Item -LiteralPath $source.FullName -Destination $destination
-              Write-Host "Restored NSIS template at $destination"
+              Set-Content -LiteralPath $destination -Value $fallback -Encoding ascii
+              Write-Host "Restored fallback NSIS template at $destination"
             }
           }
 
