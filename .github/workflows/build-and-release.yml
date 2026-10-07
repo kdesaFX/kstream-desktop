@@ -113,7 +113,7 @@ jobs:
             if (-not $includeDirs) { throw "electron-builder NSIS include directory is missing" }
             $fallback = "!macro ALLOW_ONLY_ONE_INSTALLER_INSTANCE`n!macroend`n!macro CHECK_APP_RUNNING`n!macroend`n"
             foreach ($dir in $includeDirs) {
-              Set-Content -LiteralPath (Join-Path $dir.FullName 'allowOnlyOneInstallerInstance.nsh') -Value $fallback -Encoding ascii
+              Set-Content -LiteralPath (Join-Path $dir 'allowOnlyOneInstallerInstance.nsh') -Value $fallback -Encoding ascii
             }
             Write-Host "Restored fallback NSIS template in $($includeDirs.Count) package path(s)"
             exit 0
