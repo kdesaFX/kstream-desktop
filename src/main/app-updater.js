@@ -18,6 +18,8 @@ let manualCheck = false;
 let getWindow = () => null;
 let setQuitting = () => {};
 let fallbackPromise = null;
+let automaticApplyEnabled = false;
+let automaticApplyStarted = false;
 const launchedAfterUpdateFailure = process.argv.includes(
   '--kstream-update-failed',
 );
@@ -97,6 +99,23 @@ function setStatus(partial) {
   status = { ...status, ...partial };
   writePersisted();
   broadcast();
+  if (
+    automaticApplyEnabled &&
+    !automaticApplyStarted &&
+    status.phase === 'ready' &&
+    isNewerVersion(status.version, app.getVersion())
+  ) {
+    automaticApplyStarted = true;
+    void applyDesktopUpdate(setQuitting, { automatic: true }).then((result) => {
+      if (!result?.ok) {
+        automaticApplyStarted = false;
+        console.warn(
+          '[kstream-desktop] automatic update apply failed',
+          result?.error || 'unknown error',
+        );
+      }
+    });
+  }
 }
 
 function sameAppVersion(a, b) {
@@ -570,6 +589,22 @@ function initializeUpdater(windowGetter, quittingSetter) {
 
   configureAutoUpdater();
   hydrateFromDisk();
+  automaticApplyEnabled = !launchedAfterUpdateFailure;
+  if (status.phase === 'ready') {
+    setStatus({ phase: 'ready' });
+  }
+
+  // Check on every packaged launch. The app window is already open, so a slow
+  // update check never traps the user at startup; a downloaded update is
+  // applied silently as soon as it is ready.
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch((err) => {
+      console.warn('[kstream-desktop] update check failed', err?.message || err);
+      if (automaticApplyEnabled) {
+        void startSilentSetupFallback();
+      }
+    });
+  }, 1_000);
 }
 
 function getDesktopUpdateStatus() {
@@ -601,7 +636,7 @@ async function applyDesktopUpdate(quittingSetter, options = {}) {
   if (!app.isPackaged) {
     return { ok: false, error: 'dev' };
   }
-  if (!options.userInitiated) {
+  if (!options.userInitiated && !options.automatic) {
     return { ok: false, error: 'user-action-required' };
   }
 
