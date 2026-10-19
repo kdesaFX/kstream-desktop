@@ -440,20 +440,30 @@ function installedExePath() {
   return path.join(getInstallDir(), 'kstream.exe');
 }
 
+function quotePowerShell(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
 /** Run the installer outside Electron and verify a replacement process starts. */
 function scheduleRelaunchAfterApply(setupPath, targetVersion) {
   const installed = installedExePath();
   const exe = fs.existsSync(installed) ? installed : process.execPath;
   const logPath = path.join(app.getPath('userData'), 'update-supervisor.log');
+  const readyPath = path.join(
+    app.getPath('temp'),
+    `kstream-update-supervisor-${process.pid}.ready`,
+  );
+  removeFile(readyPath);
   const script = [
-    `$setup = ${JSON.stringify(setupPath)}`,
-    `$exe = ${JSON.stringify(exe)}`,
-    `$target = ${JSON.stringify(String(targetVersion || ''))}`,
-    `$log = ${JSON.stringify(logPath)}`,
+    `$setup = ${quotePowerShell(setupPath)}`,
+    `$exe = ${quotePowerShell(exe)}`,
+    `$target = ${quotePowerShell(String(targetVersion || ''))}`,
+    `$log = ${quotePowerShell(logPath)}`,
+    `$ready = ${quotePowerShell(readyPath)}`,
     `$parentPid = ${process.pid}`,
     'function Log($message) { Add-Content -LiteralPath $log -Value ((Get-Date).ToString("o") + " " + $message) }',
     'function Relaunch($failed) { if (Test-Path -LiteralPath $exe) { $args = @(); if ($failed) { $args = @("--kstream-update-failed") }; try { $child = Start-Process -FilePath $exe -ArgumentList $args -WorkingDirectory (Split-Path -Parent $exe) -PassThru -ErrorAction Stop; Start-Sleep -Seconds 2; if (Get-Process -Id $child.Id -ErrorAction SilentlyContinue) { return $true }; Log "relaunch exited immediately" } catch { Log ("relaunch failed: " + $_.Exception.Message) } }; return $false }',
-    'Log "supervisor started"',
+    'Log "supervisor started"; Set-Content -LiteralPath $ready -Value "ready" -Encoding ascii',
     'for ($i = 0; $i -lt 60; $i++) { if (-not (Get-Process -Id $parentPid -ErrorAction SilentlyContinue)) { break }; Start-Sleep -Milliseconds 250 }',
     'try { $installer = Start-Process -FilePath $setup -ArgumentList @("/S", "/currentuser", "/NCRC") -PassThru -WindowStyle Hidden -ErrorAction Stop } catch { Log ("installer start failed: " + $_.Exception.Message); Relaunch $true; exit 1 }',
     '$installer.WaitForExit()',
@@ -465,43 +475,58 @@ function scheduleRelaunchAfterApply(setupPath, targetVersion) {
     'for ($i = 0; $i -lt 30; $i++) { try { if (Relaunch $false) { Log "relaunch started"; exit 0 } } catch { Log ("relaunch retry failed: " + $_.Exception.Message) }; Start-Sleep -Seconds 1 }',
     'Log "relaunch could not be started"; Relaunch $true; exit 1',
   ].join('; ');
-  return spawn(
-    'powershell.exe',
-    [
-      '-NoProfile',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-WindowStyle',
-      'Hidden',
-      '-Command',
-      script,
-    ],
-    {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-    },
-  );
+  let child;
+  try {
+    child = spawn(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-WindowStyle',
+        'Hidden',
+        '-EncodedCommand',
+        Buffer.from(script, 'utf16le').toString('base64'),
+      ],
+      {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      },
+    );
+  } catch (err) {
+    removeFile(readyPath);
+    throw err;
+  }
+  return { child, readyPath };
 }
 
 function launchSetupAndQuit(exePath) {
   writePersisted({ pendingApply: true, targetVersion: status.version });
-  const supervisor = scheduleRelaunchAfterApply(exePath, status.version);
+  let supervisor;
+  try {
+    supervisor = scheduleRelaunchAfterApply(exePath, status.version);
+  } catch (err) {
+    writePersisted({ pendingApply: false });
+    setStatus({
+      phase: 'error',
+      error: 'Could not start the update. Try again or install it manually.',
+    });
+    console.warn(
+      '[kstream-desktop] updater supervisor failed',
+      err?.message || err,
+    );
+    return Promise.resolve(false);
+  }
   return new Promise((resolve) => {
     let settled = false;
-    let spawned = false;
-    const handoffTimeout = setTimeout(() => {
-      try {
-        supervisor.kill();
-      } catch {
-        // Ignore cleanup failures; the app must remain usable.
-      }
-      fail(new Error('Updater supervisor did not start in time'));
-    }, 5_000);
+    let handoffTimeout;
     const fail = (err) => {
       if (settled) return;
       settled = true;
+      clearInterval(readyCheck);
       clearTimeout(handoffTimeout);
+      removeFile(supervisor.readyPath);
       writePersisted({ pendingApply: false });
       setStatus({
         phase: 'error',
@@ -513,21 +538,30 @@ function launchSetupAndQuit(exePath) {
       );
       resolve(false);
     };
-    supervisor.once('error', fail);
-    supervisor.once('exit', (code) => {
-      if (!spawned || (code !== null && code !== 0)) {
-        fail(new Error(`updater supervisor exited with ${code}`));
-      }
-    });
-    supervisor.once('spawn', () => {
-      if (settled) return;
-      spawned = true;
+    const readyCheck = setInterval(() => {
+      if (settled || !fs.existsSync(supervisor.readyPath)) return;
       settled = true;
+      clearInterval(readyCheck);
       clearTimeout(handoffTimeout);
-      supervisor.unref();
+      removeFile(supervisor.readyPath);
+      supervisor.child.unref();
       setQuitting();
       setTimeout(() => app.quit(), 800);
       resolve(true);
+    }, 50);
+    handoffTimeout = setTimeout(() => {
+      try {
+        supervisor.child.kill();
+      } catch {
+        // Ignore cleanup failures; the app must remain usable.
+      }
+      fail(new Error('Updater supervisor did not start in time'));
+    }, 5_000);
+    supervisor.child.once('error', fail);
+    supervisor.child.once('exit', (code) => {
+      if (!settled || (code !== null && code !== 0)) {
+        fail(new Error(`updater supervisor exited with ${code}`));
+      }
     });
   });
 }
