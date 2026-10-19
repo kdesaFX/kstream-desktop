@@ -489,7 +489,6 @@ function scheduleRelaunchAfterApply(setupPath, targetVersion) {
         Buffer.from(script, 'utf16le').toString('base64'),
       ],
       {
-        detached: true,
         stdio: 'ignore',
         windowsHide: true,
       },
@@ -521,6 +520,17 @@ function launchSetupAndQuit(exePath) {
   return new Promise((resolve) => {
     let settled = false;
     let handoffTimeout;
+    const complete = () => {
+      if (settled) return;
+      settled = true;
+      clearInterval(readyCheck);
+      clearTimeout(handoffTimeout);
+      removeFile(supervisor.readyPath);
+      supervisor.child.unref();
+      setQuitting();
+      setTimeout(() => app.quit(), 800);
+      resolve(true);
+    };
     const fail = (err) => {
       if (settled) return;
       settled = true;
@@ -540,14 +550,7 @@ function launchSetupAndQuit(exePath) {
     };
     const readyCheck = setInterval(() => {
       if (settled || !fs.existsSync(supervisor.readyPath)) return;
-      settled = true;
-      clearInterval(readyCheck);
-      clearTimeout(handoffTimeout);
-      removeFile(supervisor.readyPath);
-      supervisor.child.unref();
-      setQuitting();
-      setTimeout(() => app.quit(), 800);
-      resolve(true);
+      complete();
     }, 50);
     handoffTimeout = setTimeout(() => {
       try {
@@ -559,9 +562,14 @@ function launchSetupAndQuit(exePath) {
     }, 5_000);
     supervisor.child.once('error', fail);
     supervisor.child.once('exit', (code) => {
-      if (!settled || (code !== null && code !== 0)) {
-        fail(new Error(`updater supervisor exited with ${code}`));
+      if (settled) {
+        if (code !== null && code !== 0) {
+          console.warn('[kstream-desktop] updater supervisor exited with', code);
+        }
+        return;
       }
+      if (fs.existsSync(supervisor.readyPath)) return complete();
+      fail(new Error(`updater supervisor exited with ${code}`));
     });
   });
 }
