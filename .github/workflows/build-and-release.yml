@@ -33,13 +33,18 @@ jobs:
           path: kstream-web
           token: ${{ secrets.RELEASES_REPO_TOKEN }}
 
-      - name: Checkout providers
-        uses: actions/checkout@v4
-        with:
-          repository: kdesaFX/providers
-          ref: production
-          token: ${{ secrets.RELEASES_REPO_TOKEN }}
-          path: providers-src
+      - name: Record website and provider source revisions
+        id: source-revisions
+        shell: pwsh
+        run: |
+          $webSha = (git -C kstream-web rev-parse HEAD).Trim()
+          $webPackage = Get-Content kstream-web/package.json -Raw | ConvertFrom-Json
+          $providerSpec = $webPackage.dependencies.'@p-stream/providers'
+          if ($providerSpec -notmatch '^github:kdesaFX/providers#([0-9a-f]{40})$') {
+            throw "Website provider dependency is not pinned to a full commit SHA: $providerSpec"
+          }
+          "web_sha=$webSha" >> $env:GITHUB_OUTPUT
+          "providers_sha=$($Matches[1])" >> $env:GITHUB_OUTPUT
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -51,26 +56,15 @@ jobs:
         with:
           version: 9
 
-      - name: Apply desktop-qualified Movix provider
-        run: node kstream-web/scripts/provider-overlays/movix/apply.mjs providers-src
-
       - name: Verify desktop compatibility with website production
         run: node scripts/verify-web-desktop-sync.cjs kstream-web
 
-      - name: Build providers and wire into kstream
-        shell: pwsh
+      - name: Prepare the exact provider revision pinned by the website
+        working-directory: kstream-web
         env:
+          GITHUB_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
           PUPPETEER_SKIP_DOWNLOAD: '1'
-        run: |
-          Push-Location providers-src
-          pnpm install --ignore-workspace
-          pnpm exec vite build
-          pnpm pack --pack-destination ..
-          Pop-Location
-          $providerPackage = (Get-ChildItem -Path . -Filter "p-stream-providers-*.tgz" | Select-Object -First 1).Name
-          if (-not $providerPackage) { throw "Provider package was not packed" }
-          node -e "const fs=require('fs'); const provider=process.argv[1]; const p='kstream-web/package.json'; const pkg=JSON.parse(fs.readFileSync(p,'utf8')); pkg.dependencies['@p-stream/providers']='file:../'+provider; fs.writeFileSync(p, JSON.stringify(pkg,null,2)+'\n');" $providerPackage
-          if (Test-Path kstream-web/pnpm-lock.yaml) { Remove-Item -Force kstream-web/pnpm-lock.yaml }
+        run: node scripts/prepare-providers.mjs
 
       - name: Install kstream web dependencies
         working-directory: kstream-web
@@ -100,7 +94,17 @@ jobs:
           if (-not (Test-Path "$dest/index.html")) {
             throw "kstream web build did not produce index.html"
           }
+          $desktopPackage = Get-Content package.json -Raw | ConvertFrom-Json
+          $buildInfo = [ordered]@{
+            desktopVersion = $desktopPackage.version
+            webCommit = $env:WEB_SHA
+            providersCommit = $env:PROVIDERS_SHA
+          }
+          $buildInfo | ConvertTo-Json | Set-Content -Encoding utf8 "$dest/build-info.json"
           Write-Host "Bundled web UI files:" (Get-ChildItem $dest -Recurse -File | Measure-Object).Count
+        env:
+          WEB_SHA: ${{ steps.source-revisions.outputs.web_sha }}
+          PROVIDERS_SHA: ${{ steps.source-revisions.outputs.providers_sha }}
 
       - name: Install desktop dependencies
         run: pnpm install --config.node-linker=hoisted --config.block-exotic-subdeps=false

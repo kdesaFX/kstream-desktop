@@ -23,9 +23,7 @@ function requireMatch(source, expression, description) {
 
 const providers = readWebFile('src/backend/providers/providers.ts');
 const sourceOrder = readWebFile('src/utils/media/sourceOrder.ts');
-const sourceSelection = readWebFile(
-  'src/components/player/atoms/settings/SourceSelectingView.tsx',
-);
+const providerScraping = readWebFile('src/hooks/useProviderScrape.tsx');
 const releaseWorkflow = fs.readFileSync(
   path.resolve('.github/workflows/build-and-release.yml'),
   'utf8',
@@ -40,7 +38,7 @@ const desktopOnly = extractSet(providers, 'DESKTOP_SOURCE_IDS');
 const webExtras = extractSet(providers, 'WEB_EXTRA_SOURCE_IDS');
 requireMatch(
   providers,
-  /const\s+DESKTOP_SOURCE_IDS\s*=\s*new Set\(\[\s*\.\.\.ENABLED_SOURCE_IDS,\s*["']movix["']\s*\]\);/,
+  /const\s+DESKTOP_SOURCE_IDS\s*=\s*new Set\(\[[\s\S]*?\.\.\.ENABLED_SOURCE_IDS,[\s\S]*?["']movix["']/,
   'desktop must inherit shared sources and add qualified Movix',
 );
 requireMatch(
@@ -50,18 +48,36 @@ requireMatch(
 );
 requireMatch(
   releaseWorkflow,
-  /node\s+kstream-web\/scripts\/provider-overlays\/movix\/apply\.mjs\s+providers-src/,
-  'desktop release must include the Movix adapter in its provider bundle',
+  /working-directory:\s*kstream-web[\s\S]*?node\s+scripts\/prepare-providers\.mjs/,
+  'desktop release must run the website provider preparation script from its pinned web checkout',
 );
+requireMatch(
+  releaseWorkflow,
+  /Record website and provider source revisions[\s\S]*?providers_sha=/,
+  'desktop release must record the exact website and provider revisions',
+);
+requireMatch(
+  releaseWorkflow,
+  /webCommit\s*=\s*\$env:WEB_SHA[\s\S]*?providersCommit\s*=\s*\$env:PROVIDERS_SHA/,
+  'desktop bundle must carry its website and provider source revisions',
+);
+const providerPreparation = readWebFile('scripts/prepare-providers.mjs');
+for (const overlay of ['Movix', 'CastleTv', 'VeoVeo']) {
+  requireMatch(
+    providerPreparation,
+    new RegExp(`apply${overlay}ProviderOverlay\\(PROVIDERS_DIR\\)`),
+    `desktop provider preparation must include the ${overlay} compatibility overlay`,
+  );
+}
 requireMatch(
   sourceOrder,
   /LAST_RESORT_SOURCE_IDS\s*=\s*new Set(?:<string>)?\(\[[^\]]*["']movix["'][^\]]*\]\)/,
   'Movix must remain deferred as a last-resort source',
 );
 requireMatch(
-  sourceSelection,
-  /filterLastResortSourcesUntilNormalFailed/,
-  'source selection UI must honor last-resort ordering',
+  providerScraping,
+  /deferLastResortSources\(baseSourceOrder\)/,
+  'provider scraping must preserve last-resort source ordering',
 );
 requireMatch(
   desktopPreload,
