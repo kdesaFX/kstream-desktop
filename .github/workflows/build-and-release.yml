@@ -63,7 +63,7 @@ jobs:
         working-directory: kstream-web
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
-          KSTREAM_PROVIDERS_DIR: ${{ github.workspace }}\providers-src
+          KSTREAM_PROVIDERS_DIR: ${{ github.workspace }}\..\providers-src
           PUPPETEER_SKIP_DOWNLOAD: '1'
         run: node scripts/prepare-providers.mjs
 
