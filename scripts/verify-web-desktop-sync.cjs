@@ -53,6 +53,11 @@ requireMatch(
 );
 requireMatch(
   releaseWorkflow,
+  /KSTREAM_PROVIDERS_DIR:\s*\$\{\{\s*github\.workspace\s*\}\}\\providers-src/,
+  'desktop provider checkout must be a workspace sibling so Windows pnpm resolves its file dependency',
+);
+requireMatch(
+  releaseWorkflow,
   /Record website and provider source revisions[\s\S]*?providers_sha=/,
   'desktop release must record the exact website and provider revisions',
 );
